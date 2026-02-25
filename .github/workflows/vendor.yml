@@ -1,0 +1,48 @@
+name: Update Go Dependencies
+
+on:
+  push:
+    branches:
+      - master  # 推送到master分支时触发
+  workflow_dispatch:     # 允许手动触发
+
+jobs:
+  update-dependencies:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: ${{ github.ref }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: 'stable'
+
+      - name: Update Go modules
+        run: |
+          go get -u ./...
+          go mod tidy
+          go mod vendor
+
+      - name: Upload vendor as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vendor
+          path: vendor/
+
+      - name: Check for changes
+        id: git-check
+        run: |
+          git diff --quiet || echo "changed=true" >> $GITHUB_OUTPUT
+
+      - name: Commit and push changes
+        if: steps.git-check.outputs.changed == 'true'
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add .
+          git commit -m "chore: update go dependencies and vendor"
+          git push
