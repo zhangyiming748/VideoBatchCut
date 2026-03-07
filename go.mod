@@ -7,6 +7,7 @@ require (
 	github.com/h2non/filetype v1.1.3
 	github.com/spf13/cobra v1.10.2
 	github.com/zhangyiming748/FastMediaInfo v0.0.7
+	github.com/zhangyiming748/archive v0.0.20
 	github.com/zhangyiming748/finder v0.0.7
 	github.com/zhangyiming748/lumberjack v0.0.1
 	gorm.io/gorm v1.31.1

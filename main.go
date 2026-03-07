@@ -52,8 +52,26 @@ func main() {
 			core.FastMP4(root)
 		},
 	}
-	// 为fast命令添加标志
+	// 为 fast 命令添加标志
 	fastmp4Cmd.Flags().String("root", "./", "根目录路径 (必需)")
+
+	// 添加 archive 命令
+	var archiveCmd = &cobra.Command{
+		Use:   "archive",
+		Short: "归档转换视频",
+		Long:  "根据指定的根目录归档转换视频文件",
+		Run: func(cmd *cobra.Command, args []string) {
+			root, _ := cmd.Flags().GetString("root")
+			if root == "" {
+				fmt.Println("错误：必须指定 --root 参数")
+				return
+			}
+			fmt.Printf("开始执行视频归档转换任务...\n根目录：%s\n", root)
+			core.Archive(root)
+		},
+	}
+	// 为 archive 命令添加标志
+	archiveCmd.Flags().String("root", "./", "根目录路径 (必需)")
 
 	// 添加version命令
 	var versionCmd = &cobra.Command{
@@ -68,6 +86,7 @@ func main() {
 
 	rootCmd.AddCommand(cutCmd)
 	rootCmd.AddCommand(fastmp4Cmd)
+	rootCmd.AddCommand(archiveCmd)
 	rootCmd.AddCommand(versionCmd)
 
 	// 执行命令
