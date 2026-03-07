@@ -24,18 +24,17 @@ func main() {
 		Short: "切割文件",
 		Long:  "根据指定的根目录切割文件",
 		Run: func(cmd *cobra.Command, args []string) {
-			root, _ := cmd.Flags().GetString("root")
-			if root == "" {
-				fmt.Println("错误: 必须指定 --root 参数")
+			dir, _ := cmd.Flags().GetString("dir")
+			if dir == "" {
+				fmt.Println("错误：必须指定 --dir 参数")
 				return
 			}
-			fmt.Printf("开始执行视频切割任务...\n根目录: %s\n", root)
-			core.Cut(root)
+			fmt.Printf("开始执行视频切割任务...\n根目录：%s\n", dir)
+			core.Cut(dir)
 		},
 	}
-
-	// 为cut命令添加标志
-	cutCmd.Flags().String("root", "./", "根目录路径 (必需)")
+	// 为 cut 命令添加标志
+	cutCmd.Flags().StringP("dir", "d", "./", "根目录路径 (必需)")
 
 	// 添加fastmp4命令
 	var fastmp4Cmd = &cobra.Command{
@@ -43,35 +42,35 @@ func main() {
 		Short: "快速转换MP4",
 		Long:  "根据指定的根目录快速转换MP4",
 		Run: func(cmd *cobra.Command, args []string) {
-			root, _ := cmd.Flags().GetString("root")
-			if root == "" {
-				fmt.Println("错误: 必须指定 --root 参数")
+			dir, _ := cmd.Flags().GetString("dir")
+			if dir == "" {
+				fmt.Println("错误：必须指定 --dir 参数")
 				return
 			}
-			fmt.Printf("开始执行快速转换mp4任务...\n根目录: %s\n", root)
-			core.FastMP4(root)
+			fmt.Printf("开始执行快速转换 mp4 任务...\n根目录：%s\n", dir)
+			core.FastMP4(dir)
 		},
 	}
 	// 为 fast 命令添加标志
-	fastmp4Cmd.Flags().String("root", "./", "根目录路径 (必需)")
+	fastmp4Cmd.Flags().StringP("dir", "d", "./", "根目录路径 (必需)")
 
 	// 添加 archive 命令
 	var archiveCmd = &cobra.Command{
 		Use:   "archive",
-		Short: "归档转换视频",
-		Long:  "根据指定的根目录归档转换视频文件",
+		Short: "转换符合特征的视频文件",
+		Long:  "转换一个文件夹中已经经过分割的视频文件",
 		Run: func(cmd *cobra.Command, args []string) {
-			root, _ := cmd.Flags().GetString("root")
-			if root == "" {
-				fmt.Println("错误：必须指定 --root 参数")
+			dir, _ := cmd.Flags().GetString("dir")
+			if dir == "" {
+				fmt.Println("错误：必须指定 --dir 参数")
 				return
 			}
-			fmt.Printf("开始执行视频归档转换任务...\n根目录：%s\n", root)
-			core.Archive(root)
+			fmt.Printf("开始执行视频归档转换任务...\n根目录：%s\n", dir)
+			core.Archive(dir)
 		},
 	}
 	// 为 archive 命令添加标志
-	archiveCmd.Flags().String("root", "./", "根目录路径 (必需)")
+	archiveCmd.Flags().StringP("dir", "d", "./", "根目录路径 (必需)")
 
 	// 添加version命令
 	var versionCmd = &cobra.Command{
