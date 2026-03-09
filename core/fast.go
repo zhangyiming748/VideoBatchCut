@@ -3,14 +3,21 @@ package core
 import (
 	"VideoBatchCut/ffmpeg"
 	"github.com/zhangyiming748/FastMediaInfo"
+	"github.com/zhangyiming748/GracefullyExit"
 	"github.com/zhangyiming748/finder"
+	"log"
 	"path/filepath"
 )
 
 func FastMP4(root string) {
+	ge := GracefullyExit.New()
+	defer ge.Stop()
 	folders := finder.FindAllFolders(root)
 	for _, folder := range folders {
 		videos := finder.FindAllVideosInRoot(folder)
+		if len(videos) > 1 {
+			log.Printf("警告 根文件夹:%s下包含多个视频\n", folder)
+		}
 		for _, video := range videos {
 			mi := FastMediaInfo.GetStandMediaInfo(video)
 			if filepath.Ext(video) == ".mp4" {
@@ -21,6 +28,10 @@ func FastMP4(root string) {
 			if err := ffmpeg.AnyVideoToMP4(video); err != nil {
 				continue
 			}
+		}
+		if ge.ShouldExit("q") {
+			log.Println("Exit signal received. Quitting after current operation.")
+			break
 		}
 	}
 }
