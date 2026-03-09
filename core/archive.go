@@ -1,9 +1,9 @@
 package core
 
 import (
+	"github.com/zhangyiming748/GracefullyExit"
 	"github.com/zhangyiming748/archive"
 	"github.com/zhangyiming748/finder"
-	"github.com/zhangyiming748/GracefullyExit"
 	"log"
 )
 
@@ -15,10 +15,10 @@ import (
 */
 
 func Archive(root string) {
-	ge:=GracefullyExit.New()
+	ge := GracefullyExit.New()
 	defer ge.Stop()
 	// 获取所有子目录
-	folders:=finder.FindAllFolders(root)
+	folders := finder.FindAllFolders(root)
 	for _, folder := range folders {
 		// 获取该目录下的所有mp4文件
 		mp4Files := finder.FindAllVideosInRoot(folder)
@@ -26,9 +26,9 @@ func Archive(root string) {
 			// 文件夹符合特征
 			for _, mp4File := range mp4Files {
 				archive.Convert2H265(mp4File)
-				if ge.ShouldExit("q"){
+				if ge.ShouldExit("q") {
 					log.Println("Exit signal received. Quitting after current operation.")
-			break
+					break
 				}
 			}
 		}

@@ -5,8 +5,8 @@ import (
 	"os"
 	"runtime"
 
-	"github.com/spf13/cobra"
 	"VideoBatchCut/core"
+	"github.com/spf13/cobra"
 )
 
 func main() {
