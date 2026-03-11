@@ -15,9 +15,6 @@ import (
 */
 
 func Archive(root string) {
-	GracefullyExit.StartReceivedExit()
-	// 启动信号处理器，监听用户输入
-
 	// 获取所有子目录
 	folders := finder.FindAllFolders(root)
 	for _, folder := range folders {

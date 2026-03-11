@@ -2,12 +2,23 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"runtime"
 
 	"VideoBatchCut/core"
+	"VideoBatchCut/util"
+
 	"github.com/spf13/cobra"
+	"github.com/zhangyiming748/GracefullyExit"
 )
+
+func init() {
+	// 初始化日志文件和配置
+	util.SetLog("BitchCut.log")
+	// 设置日志标志：包含文件名和行号
+	log.SetFlags(2 | 16)
+}
 
 func main() {
 	var rootCmd = &cobra.Command{
@@ -86,7 +97,8 @@ func main() {
 	rootCmd.AddCommand(fastmp4Cmd)
 	rootCmd.AddCommand(archiveCmd)
 	rootCmd.AddCommand(versionCmd)
-
+	// 启动信号处理器，监听用户输入
+	go GracefullyExit.StartReceivedExit()
 	// 执行命令
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)

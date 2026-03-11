@@ -10,8 +10,6 @@ import (
 )
 
 func FastMP4(root string) {
-	GracefullyExit.StartReceivedExit()
-
 	folders := finder.FindAllFolders(root)
 	for _, folder := range folders {
 		videos := finder.FindAllVideosInRoot(folder)
