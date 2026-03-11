@@ -23,6 +23,10 @@ func Cut(root string) {
 	}
 	// 遍历每个文件夹进行处理
 	for _, folder := range folders {
+		if GracefullyExit.ShouldExit() {
+			log.Println("Exit signal received. Quitting after current operation.")
+			os.Exit(0)
+		}
 		fmt.Printf("for遍历到的文件夹:%v\n", folder)
 		llcFile, has := util.FindProjLLCFile(folder)
 		if !has {
@@ -49,24 +53,12 @@ func Cut(root string) {
 		log.Printf("目录%v\t文件%v共有%d章节\n", folder, mp4, len(segments))
 		if err = ffmpeg.CutBySegments(mp4, segments); err != nil {
 			log.Printf("%v\n", err)
-			if GracefullyExit.ShouldExit() {
-				log.Println("Exit signal received. Quitting after current operation.")
-				break
-			} else {
-				continue
-			}
 		} else {
 			if err := os.RemoveAll(mp4); err != nil {
 				log.Printf("删除%v失败\t%v\n", mp4, err)
 			}
 			if err := os.RemoveAll(llcFile); err != nil {
 				log.Printf("删除%v失败\t%v\n", llcFile, err)
-			}
-			if GracefullyExit.ShouldExit() {
-				log.Println("Exit signal received. Quitting after current operation.")
-				break
-			} else {
-				log.Printf("分割文件结束,删除%v成功\n", mp4)
 			}
 		}
 	}

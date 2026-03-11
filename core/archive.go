@@ -5,6 +5,7 @@ import (
 	"github.com/zhangyiming748/archive"
 	"github.com/zhangyiming748/finder"
 	"log"
+	"os"
 )
 
 /*
@@ -26,7 +27,7 @@ func Archive(root string) {
 				archive.Convert2H265(mp4File)
 				if GracefullyExit.ShouldExit() {
 					log.Println("Exit signal received. Quitting after current operation.")
-					break
+					os.Exit(0)
 				}
 			}
 		}

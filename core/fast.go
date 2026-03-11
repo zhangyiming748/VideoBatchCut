@@ -6,6 +6,7 @@ import (
 	"github.com/zhangyiming748/GracefullyExit"
 	"github.com/zhangyiming748/finder"
 	"log"
+	"os"
 	"path/filepath"
 )
 
@@ -29,7 +30,7 @@ func FastMP4(root string) {
 		}
 		if GracefullyExit.ShouldExit() {
 			log.Println("Exit signal received. Quitting after current operation.")
-			break
+			os.Exit(0)
 		}
 	}
 }
