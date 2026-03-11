@@ -10,8 +10,8 @@ import (
 )
 
 func FastMP4(root string) {
-	ge := GracefullyExit.New()
-	defer ge.Stop()
+	GracefullyExit.StartReceivedExit()
+
 	folders := finder.FindAllFolders(root)
 	for _, folder := range folders {
 		videos := finder.FindAllVideosInRoot(folder)
@@ -29,7 +29,7 @@ func FastMP4(root string) {
 				continue
 			}
 		}
-		if ge.ShouldExit("q") {
+		if GracefullyExit.ShouldExit() {
 			log.Println("Exit signal received. Quitting after current operation.")
 			break
 		}

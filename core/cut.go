@@ -22,8 +22,8 @@ func init() {
 }
 
 func Cut(root string) {
-	ge := GracefullyExit.New()
-	defer ge.Stop() // 程序结束时清理
+	GracefullyExit.StartReceivedExit()
+
 	sqlite.SetSqlite()
 	// 获取包含LLC文件的所有文件夹
 	folders, _ := util.GetFoldersWithLLCFiles(root)
@@ -58,7 +58,7 @@ func Cut(root string) {
 		log.Printf("目录%v\t文件%v共有%d章节\n", folder, mp4, len(segments))
 		if err = ffmpeg.CutBySegments(mp4, segments); err != nil {
 			log.Printf("%v\n", err)
-			if ge.ShouldExit("q") {
+			if GracefullyExit.ShouldExit() {
 				log.Println("Exit signal received. Quitting after current operation.")
 				break
 			} else {
@@ -71,7 +71,7 @@ func Cut(root string) {
 			if err := os.RemoveAll(llcFile); err != nil {
 				log.Printf("删除%v失败\t%v\n", llcFile, err)
 			}
-			if ge.ShouldExit("q") {
+			if GracefullyExit.ShouldExit() {
 				log.Println("Exit signal received. Quitting after current operation.")
 				break
 			} else {
