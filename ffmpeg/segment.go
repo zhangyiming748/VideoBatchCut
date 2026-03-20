@@ -7,20 +7,31 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-
-	"VideoBatchCut/sqlite"
-	"VideoBatchCut/util"
+	"runtime"
+	"strings"
 )
 
-// HasH264NVENC 检查ffmpeg是否支持h264_nvenc编码器
+// HasH264NVENC 检测是否支持 NVIDIA H264 NVENC 硬件编码
 func HasH264NVENC() bool {
-	// 使用更准确的方法检测 CUDA 硬件编码器支持
+	// macOS 不再支持 NVIDIA CUDA 和 NVENC，直接返回 false
+	if runtime.GOOS == "darwin" {
+		return false
+	}
+	
+	// 对于其他操作系统，检查是否有 nvidia-smi 命令
 	cmd := exec.Command("nvidia-smi")
-	_, err := cmd.CombinedOutput()
+	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return false
 	}
-	return true
+	
+	// 检查输出是否包含预期的 NVIDIA 信息
+	outputStr := strings.ToLower(string(output))
+	if strings.Contains(outputStr, "nvidia") && !strings.Contains(outputStr, "not found") {
+		return true
+	}
+	
+	return false
 }
 
 // CutBySegments 根据给定的片段列表切割视频文件
