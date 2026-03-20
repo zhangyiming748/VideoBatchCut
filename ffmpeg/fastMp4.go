@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -12,13 +13,19 @@ func AnyVideoToMP4(fp string) error {
 	if filepath.Ext(fp) == ".mp4" {
 		tempName := strings.Replace(fp, ".mp4", "_tmp.mp4", 1)
 		var cmd *exec.Cmd
-		if HasH264NVENC() {
-			cmd = exec.Command("ffmpeg", "-i", fp, "-c:v", "h264_nvenc", "-c:a", "aac", tempName)
-
+		var args []string
+		args = append(args, "-i", fp)
+		if runtime.GOOS == "darwin" {
+			args = append(args, "-c:v", "h264_videotoolbox")
+			args = append(args, "-q:v", "50")
+		} else if HasH264NVENC() {
+			args = append(args, "-c:v", "h264_nvenc")
 		} else {
-			cmd = exec.Command("ffmpeg", "-i", fp, "-c:v", "libx264", "-c:a", "aac", tempName)
-
+			args = append(args, "-c:v", "libx265")
 		}
+		args = append(args, "-c:a", "aac")
+		args = append(args, tempName)
+		cmd = exec.Command("ffmpeg", args...)
 		log.Printf("执行命令:%v\n", cmd.String())
 		_, err := cmd.CombinedOutput()
 		if err != nil {
@@ -35,7 +42,20 @@ func AnyVideoToMP4(fp string) error {
 		}
 	} else {
 		out := strings.Replace(fp, filepath.Ext(fp), ".mp4", 1)
-		cmd := exec.Command("ffmpeg", "-i", fp, "-c:v", "h264_nvenc", "-c:a", "aac", out)
+		var cmd *exec.Cmd
+		var args []string
+		args = append(args, "-i", fp)
+		if runtime.GOOS == "darwin" {
+			args = append(args, "-c:v", "h264_videotoolbox")
+			args = append(args, "-q:v", "50")
+		} else if HasH264NVENC() {
+			args = append(args, "-c:v", "h264_nvenc")
+		} else {
+			args = append(args, "-c:v", "libx265")
+		}
+		args = append(args, "-c:a", "aac")
+		args = append(args, out)
+		cmd = exec.Command("ffmpeg", args...)
 		log.Printf("执行命令:%v\n", cmd.String())
 		_, err := cmd.CombinedOutput()
 		if err != nil {

@@ -2,6 +2,7 @@
 package ffmpeg
 
 import (
+	"VideoBatchCut/util"
 	"fmt"
 	"log"
 	"os"
@@ -9,29 +10,32 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"VideoBatchCut/util"
 )
 
 // HasH264NVENC 检测是否支持 NVIDIA H264 NVENC 硬件编码
 func HasH264NVENC() bool {
+	log.Printf("[DEBUG] runtime.GOOS=%s\n", runtime.GOOS)
 	// macOS 不再支持 NVIDIA CUDA 和 NVENC，直接返回 false
 	if runtime.GOOS == "darwin" {
+		log.Println("[DEBUG] macOS detected, returning false for NVENC")
 		return false
 	}
-	
+
+	log.Println("[DEBUG] Checking nvidia-smi...")
 	// 对于其他操作系统，检查是否有 nvidia-smi 命令
 	cmd := exec.Command("nvidia-smi")
 	output, err := cmd.CombinedOutput()
+	log.Printf("[DEBUG] nvidia-smi err=%v, output=%s\n", err, string(output))
 	if err != nil {
 		return false
 	}
-	
+
 	// 检查输出是否包含预期的 NVIDIA 信息
 	outputStr := strings.ToLower(string(output))
 	if strings.Contains(outputStr, "nvidia") && !strings.Contains(outputStr, "not found") {
 		return true
 	}
-	
+
 	return false
 }
 
