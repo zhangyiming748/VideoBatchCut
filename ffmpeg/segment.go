@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"VideoBatchCut/util"
 )
 
 // HasH264NVENC 检测是否支持 NVIDIA H264 NVENC 硬件编码
@@ -102,20 +103,6 @@ func CutBySegment(index, total, mp4, start, end string) error {
 	if err != nil {
 		return err
 	}
-
-	bc := new(sqlite.BatchCut)
-	bc.Sync()
-	bc.Index = index
-	bc.Total = total
-	bc.FileName = mp4
-	bc.Start = start
-	bc.End = end
-	err = bc.Insert()
-	if err != nil {
-		log.Fatalf("此次文件:%s分割成功但写入sqlite数据库失败:%v\n", mp4, err)
-	}
-
 	log.Printf("此次文件:%s分割成功并写入sqlite数据库成功\n", mp4)
-
 	return nil
 }
