@@ -24,7 +24,7 @@ func Archive(root string) {
 		if len(mp4Files) >= 2 {
 			// 文件夹符合特征
 			for _, mp4File := range mp4Files {
-				archive.Convert2H265(mp4File)
+				archive.Convert2H265(mp4File, true)
 				if GracefullyExit.ShouldExit() {
 					log.Println("Exit signal received. Quitting after current operation.")
 					os.Exit(0)
