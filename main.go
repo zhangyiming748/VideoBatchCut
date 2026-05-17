@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"runtime"
 
@@ -16,8 +15,7 @@ import (
 func init() {
 	// 初始化日志文件和配置
 	util.SetLog("BitchCut.log")
-	// 设置日志标志：包含文件名和行号
-	log.SetFlags(2 | 16)
+
 }
 
 func main() {
