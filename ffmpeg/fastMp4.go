@@ -63,7 +63,13 @@ func AnyVideoToMP4(fp string) error {
 }
 
 /*
-ffmpeg -i video.mp4 -stream_loop -1 -i audio.mp3 -c:v h264_nvenc -c:a aac -b:a 192k -map 0:v:0 -map 1:a:0 -shortest output.mp4
+	ffmpeg -i video.mp4 -stream_loop -1 -i audio.mp3 \
+	  -c:v h264_nvenc -preset p7 -tune hq -rc vbr_hq -cq 18 -b:v 0 \
+	  -spatial-aq 1 -temporal-aq 1 -aq-strength 15 \
+	  -profile:v high -level 5.1 \
+	  -c:a aac -b:a 320k -ar 48000 \
+	  -map 0:v:0 -map 1:a:0 -shortest \
+	  -max_muxing_queue_size 9999 output.mp4
 */
 func ForDji(videoPath, audioPath string) error {
 	// 检查是否为mp4文件(大小写不敏感)
@@ -80,18 +86,35 @@ func ForDji(videoPath, audioPath string) error {
 	args = append(args, "-i", videoPath)
 	args = append(args, "-stream_loop", "-1")
 	args = append(args, "-i", audioPath)
+	// 使用NVENC高质量编码，几乎无损
 	args = append(args, "-c:v", "h264_nvenc")
+	args = append(args, "-preset", "p7")      // 最高质量预设（最慢但质量最好）
+	args = append(args, "-tune", "hq")        // 高质量调优
+	args = append(args, "-rc", "vbr_hq")      // 高质量可变比特率
+	args = append(args, "-cq", "18")          // 恒定质量模式，18接近无损（范围0-51，越小质量越高）
+	args = append(args, "-b:v", "0")          // 不限制比特率
+	args = append(args, "-maxrate", "0")      // 不限制最大比特率
+	args = append(args, "-bufsize", "0")      // 不限制缓冲区大小
+	args = append(args, "-spatial-aq", "1")   // 空间自适应量化，提升质量
+	args = append(args, "-temporal-aq", "1")  // 时间自适应量化，提升质量
+	args = append(args, "-aq-strength", "15") // AQ强度（1-15，15最强）
+	args = append(args, "-profile:v", "high") // H.264 High Profile
+	args = append(args, "-level", "5.1")      // 支持1080p60
+	// 音频编码
 	args = append(args, "-c:a", "aac")
-	args = append(args, "-b:a", "192k")
+	args = append(args, "-b:a", "320k") // 高质量音频
+	args = append(args, "-ar", "48000") // 采样率48kHz
 	args = append(args, "-map", "0:v:0")
 	args = append(args, "-map", "1:a:0")
 	args = append(args, "-shortest")
+	// 增加缓冲区大小以避免无限循环音频导致的缓冲区溢出
+	args = append(args, "-max_muxing_queue_size", "9999")
 	args = append(args, tempName)
 	cmd = exec.Command("ffmpeg", args...)
 	log.Printf("执行命令:%v\n", cmd.String())
-	_, err := cmd.CombinedOutput()
+	output, err := cmd.CombinedOutput()
 	if err != nil {
-		log.Fatalf("ffmpeg快速处理文件%s失败:%v\n", videoPath, err)
+		log.Fatalf("ffmpeg快速处理文件%s失败:%v\n输出:%s\n", videoPath, err, string(output))
 	} else {
 		err = os.Remove(videoPath)
 		if err != nil {
