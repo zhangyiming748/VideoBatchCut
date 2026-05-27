@@ -44,18 +44,21 @@ func AnyVideoToMP4(fp string) error {
 	log.Printf("执行命令:%v\n", cmd.String())
 	_, err := cmd.CombinedOutput()
 	if err != nil {
-		log.Fatalf("ffmpeg快速处理文件%s失败:%v\n", fp, err)
+		log.Printf("ffmpeg快速处理文件%s失败:%v\n", fp, err)
+		return err
 	}
 
 	// 如果原文件是MP4，需要删除原文件并重命名
 	if ext == ".mp4" {
 		err = os.Remove(fp)
 		if err != nil {
-			log.Fatalf("删除文件%s失败:%v\n", fp, err)
+			log.Printf("删除文件%s失败:%v\n", fp, err)
+			return err
 		}
 		err = os.Rename(tempName, finalName)
 		if err != nil {
-			log.Fatalf("重命名文件%s失败:%v\n", finalName, err)
+			log.Printf("重命名文件%s失败:%v\n", finalName, err)
+			return err
 		}
 	}
 
@@ -114,16 +117,18 @@ func ForDji(videoPath, audioPath string) error {
 	log.Printf("执行命令:%v\n", cmd.String())
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		log.Fatalf("ffmpeg快速处理文件%s失败:%v\n输出:%s\n", videoPath, err, string(output))
-	} else {
-		err = os.Remove(videoPath)
-		if err != nil {
-			log.Fatalf("删除文件%s失败:%v\n", videoPath, err)
-		}
-		err = os.Rename(tempName, finalName)
-		if err != nil {
-			log.Fatalf("重命名文件%s失败:%v\n", finalName, err)
-		}
+		log.Printf("ffmpeg快速处理文件%s失败:%v\n输出:%s\n", videoPath, err, string(output))
+		return err
+	}
+	err = os.Remove(videoPath)
+	if err != nil {
+		log.Printf("删除文件%s失败:%v\n", videoPath, err)
+		return err
+	}
+	err = os.Rename(tempName, finalName)
+	if err != nil {
+		log.Printf("重命名文件%s失败:%v\n", finalName, err)
+		return err
 	}
 	return nil
 }
