@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
 
 	"VideoBatchCut/core"
@@ -22,8 +23,8 @@ var (
 
 func init() {
 	// 初始化日志文件和配置
-	util.SetLog("BitchCut.log")
-
+	home, _ := os.UserHomeDir()
+	util.SetLog(filepath.Join(home,"BitchCut.log"))
 }
 
 // printVersion 打印版本信息
@@ -38,7 +39,7 @@ func printVersion() {
 
 func main() {
 	var rootCmd = &cobra.Command{
-		Use:   "batch-cut",
+		Use:   "vbc",
 		Short: "VideoBatchCut的命令行版",
 		Long:  `一个用golang写的视频批量切割工具`,
 		Run: func(cmd *cobra.Command, args []string) {
