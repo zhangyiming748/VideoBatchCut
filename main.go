@@ -12,10 +12,28 @@ import (
 	"github.com/zhangyiming748/GracefullyExit"
 )
 
+// 版本信息，通过 ldflags 注入
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+	builtBy = "unknown"
+)
+
 func init() {
 	// 初始化日志文件和配置
 	util.SetLog("BitchCut.log")
 
+}
+
+// printVersion 打印版本信息
+func printVersion() {
+	fmt.Printf("VideoBatchCut 版本: %s\n", version)
+	fmt.Printf("Git Commit: %s\n", commit)
+	fmt.Printf("构建时间: %s\n", date)
+	fmt.Printf("构建者: %s\n", builtBy)
+	fmt.Printf("Go版本: %s\n", runtime.Version())
+	fmt.Printf("操作系统: %s/%s\n", runtime.GOOS, runtime.GOARCH)
 }
 
 func main() {
@@ -85,9 +103,7 @@ func main() {
 		Use:   "version",
 		Short: "显示版本信息",
 		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Printf("VideoBatchCut 版本: 1.0.0\n")
-			fmt.Printf("Go版本: %s\n", runtime.Version())
-			fmt.Printf("操作系统: %s/%s\n", runtime.GOOS, runtime.GOARCH)
+			printVersion()
 		},
 	}
 
@@ -95,6 +111,15 @@ func main() {
 	rootCmd.AddCommand(fastmp4Cmd)
 	rootCmd.AddCommand(archiveCmd)
 	rootCmd.AddCommand(versionCmd)
+
+	// 添加全局 -v/--version 标志
+	rootCmd.Flags().BoolP("version", "v", false, "显示版本信息")
+	rootCmd.PreRun = func(cmd *cobra.Command, args []string) {
+		if flag, _ := cmd.Flags().GetBool("version"); flag {
+			printVersion()
+			os.Exit(0)
+		}
+	}
 	// 启动信号处理器，监听用户输入
 	go GracefullyExit.StartReceivedExit()
 	// 执行命令
