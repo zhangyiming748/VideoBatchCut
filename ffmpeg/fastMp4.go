@@ -25,21 +25,58 @@ func AnyVideoToMP4(fp string) error {
 		tempName = strings.Replace(fp, filepath.Ext(fp), ".mp4", 1)
 		finalName = tempName
 	}
-
-	// 构建ffmpeg命令参数
-	args = append(args, "-i", fp)
-	args = append(args, "-c:v", "h264_nvenc")
-	args = append(args, "-preset", "p7")
-	args = append(args, "-tune", "hq")
-	args = append(args, "-rc", "vbr")
-	args = append(args, "-b:v", "0")
-	args = append(args, "-cq:v", "23")
-	args = append(args, "-rc-lookahead", "32")
-	args = append(args, "-spatial-aq", "1")
-	args = append(args, "-profile:v", "high")
-	args = append(args, "-c:a", "aac")
-	args = append(args, tempName)
-
+	if hasNvidia() {
+		// 构建ffmpeg命令参数
+		args = append(args, "-i", fp)
+		args = append(args, "-c:v", "h264_nvenc")
+		args = append(args, "-preset", "p7")
+		args = append(args, "-tune", "hq")
+		args = append(args, "-rc", "vbr")
+		args = append(args, "-b:v", "0")
+		args = append(args, "-cq:v", "23")
+		args = append(args, "-rc-lookahead", "32")
+		args = append(args, "-spatial-aq", "1")
+		args = append(args, "-profile:v", "high")
+		args = append(args, "-c:a", "aac")
+		args = append(args, tempName)
+	} else if hasIntel() {
+		// 使用Intel核显的H.264硬件加速编码 (QSV)
+		args = append(args, "-i", fp)
+		args = append(args, "-c:v", "h264_qsv")
+		args = append(args, "-preset", "slow")         // 慢速预设，质量更好
+		args = append(args, "-q", "18")                // 恒定质量模式，18接近无损（范围1-51，越小质量越高）
+		args = append(args, "-look_ahead", "1")        // 启用 lookahead，提升质量
+		args = append(args, "-look_ahead_depth", "40") // lookahead 深度
+		args = append(args, "-profile:v", "high")      // H.264 High Profile
+		args = append(args, "-c:a", "aac")             // AAC音频编码
+		args = append(args, "-b:a", "192k")            // 音频比特率
+		args = append(args, tempName)
+	} else if hasAMD() {
+		// 使用AMD显卡的H.264硬件加速编码 (AMF/VCE)
+		args = append(args, "-i", fp)
+		args = append(args, "-c:v", "h264_amf")
+		args = append(args, "-quality", "quality")   // 质量优先模式
+		args = append(args, "-qp_i", "18")           // I帧量化参数（越小质量越高）
+		args = append(args, "-qp_p", "20")           // P帧量化参数
+		args = append(args, "-qp_b", "22")           // B帧量化参数
+		args = append(args, "-profile", "high")      // H.264 High Profile
+		args = append(args, "-usage", "transcoding") // 转码优化模式
+		args = append(args, "-c:a", "aac")           // AAC音频编码
+		args = append(args, "-b:a", "192k")          // 音频比特率
+		args = append(args, tempName)
+	} else {
+		// 使用CPU软件编码 libx264（平衡质量和文件大小）
+		args = append(args, "-i", fp)
+		args = append(args, "-c:v", "libx264")
+		args = append(args, "-preset", "slow")     // 慢速预设，压缩效率更高
+		args = append(args, "-crf", "23")          // 恒定速率因子，23是默认值，平衡质量和大小
+		args = append(args, "-profile:v", "high")  // H.264 High Profile
+		args = append(args, "-level", "4.1")       // 兼容性更好的级别
+		args = append(args, "-pix_fmt", "yuv420p") // 广泛兼容的像素格式
+		args = append(args, "-c:a", "aac")         // AAC音频编码
+		args = append(args, "-b:a", "192k")        // 音频比特率
+		args = append(args, tempName)
+	}
 	cmd = exec.Command("ffmpeg", args...)
 	log.Printf("执行命令:%v\n", cmd.String())
 	_, err := cmd.CombinedOutput()
@@ -131,4 +168,37 @@ func ForDji(videoPath, audioPath string) error {
 		return err
 	}
 	return nil
+}
+
+func hasNvidia() bool {
+	// 检查FFmpeg是否支持NVIDIA NVENC H.264编码器
+	cmd := exec.Command("ffmpeg", "-encoders")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return false
+	}
+	// 查找h264_nvenc编码器
+	return strings.Contains(string(output), "h264_nvenc")
+}
+
+func hasIntel() bool {
+	// 检查FFmpeg是否支持Intel QSV H.264编码器
+	cmd := exec.Command("ffmpeg", "-encoders")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return false
+	}
+	// 查找h264_qsv编码器
+	return strings.Contains(string(output), "h264_qsv")
+}
+
+func hasAMD() bool {
+	// 检查FFmpeg是否支持AMD VCE H.264编码器
+	cmd := exec.Command("ffmpeg", "-encoders")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return false
+	}
+	// 查找h264_amf编码器
+	return strings.Contains(string(output), "h264_amf")
 }

@@ -34,7 +34,6 @@ func FastMP4(root string) {
 DJI录制的视频专用
 找到mp4视频
 使用ffmpeg替换音轨为指定的mp3文件循环播放直到视频结束
-
 */
 func DJI(root, audioPath string) {
 	folders := finder.FindAllFolders(root)
