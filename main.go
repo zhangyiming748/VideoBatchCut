@@ -24,7 +24,7 @@ var (
 func init() {
 	// 初始化日志文件和配置
 	home, _ := os.UserHomeDir()
-	util.SetLog(filepath.Join(home,"BitchCut.log"))
+	util.SetLog(filepath.Join(home, "BitchCut.log"))
 }
 
 // printVersion 打印版本信息
