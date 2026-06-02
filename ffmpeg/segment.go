@@ -83,11 +83,23 @@ func CutBySegment(index, total, mp4, start, end string) error {
 		cmd.Args = append(cmd.Args, "-c:v", "h264_nvenc")
 		cmd.Args = append(cmd.Args, "-preset", "slow")
 		cmd.Args = append(cmd.Args, "-cq", "18")
+		// NVENC 额外参数：优化质量和兼容性
+		cmd.Args = append(cmd.Args, "-profile:v", "high")
+		cmd.Args = append(cmd.Args, "-level", "5.1")
 	} else if fast := os.Getenv("FASTCUT"); fast == "yes" {
+		// libx264 快速模式：平衡速度和质量
 		cmd.Args = append(cmd.Args, "-c:v", "libx264")
+		cmd.Args = append(cmd.Args, "-preset", "fast")
+		cmd.Args = append(cmd.Args, "-crf", "20")
+		cmd.Args = append(cmd.Args, "-profile:v", "high")
+		cmd.Args = append(cmd.Args, "-level", "4.1")
 	} else {
+		// libx265 高质量模式：最佳压缩率
 		cmd.Args = append(cmd.Args, "-c:v", "libx265")
 		cmd.Args = append(cmd.Args, "-tag:v", "hvc1")
+		cmd.Args = append(cmd.Args, "-preset", "medium")
+		cmd.Args = append(cmd.Args, "-crf", "22")
+		cmd.Args = append(cmd.Args, "-profile:v", "main10")
 	}
 
 	cmd.Args = append(cmd.Args, "-c:a", "aac")
