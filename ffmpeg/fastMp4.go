@@ -25,6 +25,11 @@ func AnyVideoToMP4(fp string) error {
 		tempName = strings.Replace(fp, filepath.Ext(fp), ".mp4", 1)
 		finalName = tempName
 	}
+	// 这里首先判断一下 是否已经存在最终会输出的文件 如果存在 先给一个警告然后直接返回
+	if isExist(finalName) {
+		log.Printf("文件%s已存在，请勿重复处理\n", finalName)
+		return nil
+	}
 	if hasNvidia() {
 		// 构建ffmpeg命令参数
 		args = append(args, "-i", fp)
@@ -201,4 +206,17 @@ func hasAMD() bool {
 	}
 	// 查找h264_amf编码器
 	return strings.Contains(string(output), "h264_amf")
+}
+
+func isExist(path string) bool {
+	// 检查文件或目录是否存在
+	_, err := os.Stat(path)
+	if err == nil {
+		return true // 文件存在
+	}
+	if os.IsNotExist(err) {
+		return false // 文件不存在
+	}
+	// 其他错误（如权限问题），也认为不存在
+	return false
 }
