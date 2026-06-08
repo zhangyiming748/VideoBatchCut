@@ -186,36 +186,115 @@ func ForDji(videoPath, audioPath string) error {
 }
 
 func hasNvidia() bool {
-	// 检查FFmpeg是否支持NVIDIA NVENC H.264编码器
-	cmd := exec.Command("ffmpeg", "-encoders")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return false
+	// 检查系统中是否存在NVIDIA GPU
+	// 跨平台检测：尝试执行nvidia-smi（Linux/Windows）或检查system_profiler（macOS）
+	var cmd *exec.Cmd
+
+	// 先尝试nvidia-smi（Linux和Windows通用）
+	cmd = exec.Command("nvidia-smi")
+	if err := cmd.Run(); err == nil {
+		// nvidia-smi存在且执行成功，再检查FFmpeg是否支持nvenc
+		ffmpegCmd := exec.Command("ffmpeg", "-encoders")
+		output, err := ffmpegCmd.CombinedOutput()
+		if err != nil {
+			return false
+		}
+		return strings.Contains(string(output), "h264_nvenc")
 	}
-	// 查找h264_nvenc编码器
-	return strings.Contains(string(output), "h264_nvenc")
+
+	return false
 }
 
 func hasIntel() bool {
-	// 检查FFmpeg是否支持Intel QSV H.264编码器
-	cmd := exec.Command("ffmpeg", "-encoders")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return false
+	// 检查系统中是否存在Intel GPU并支持QSV
+	// 跨平台检测策略：
+	// 1. Linux: 检查/dev/dri设备
+	// 2. macOS: 检查system_profiler输出
+	// 3. Windows: 通过wmic或powershell检测
+
+	hasIntelGPU := false
+
+	// 尝试Linux方式：检查/dev/dri
+	if _, err := os.Stat("/dev/dri"); err == nil {
+		hasIntelGPU = true
 	}
-	// 查找h264_qsv编码器
-	return strings.Contains(string(output), "h264_qsv")
+
+	// 如果Linux方式失败，尝试macOS方式
+	if !hasIntelGPU {
+		cmd := exec.Command("system_profiler", "SPDisplaysDataType")
+		output, err := cmd.CombinedOutput()
+		if err == nil && strings.Contains(string(output), "Intel") {
+			hasIntelGPU = true
+		}
+	}
+
+	// 如果前两种方式都失败，尝试Windows方式
+	if !hasIntelGPU {
+		cmd := exec.Command("wmic", "path", "win32_VideoController", "get", "name")
+		output, err := cmd.CombinedOutput()
+		if err == nil && strings.Contains(string(output), "Intel") {
+			hasIntelGPU = true
+		}
+	}
+
+	// 检测到Intel GPU后，再检查FFmpeg是否支持qsv
+	if hasIntelGPU {
+		ffmpegCmd := exec.Command("ffmpeg", "-encoders")
+		output, err := ffmpegCmd.CombinedOutput()
+		if err != nil {
+			return false
+		}
+		return strings.Contains(string(output), "h264_qsv")
+	}
+
+	return false
 }
 
 func hasAMD() bool {
-	// 检查FFmpeg是否支持AMD VCE H.264编码器
-	cmd := exec.Command("ffmpeg", "-encoders")
+	// 检查系统中是否存在AMD GPU
+	// 跨平台检测策略：
+	// 1. Linux: 检查lspci输出
+	// 2. macOS: 检查system_profiler输出
+	// 3. Windows: 通过wmic检测
+
+	hasAMDGPU := false
+
+	// 尝试Linux方式：检查lspci
+	cmd := exec.Command("lspci")
 	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return false
+	if err == nil && (strings.Contains(string(output), "AMD") || strings.Contains(string(output), "ATI")) {
+		hasAMDGPU = true
 	}
-	// 查找h264_amf编码器
-	return strings.Contains(string(output), "h264_amf")
+
+	// 如果Linux方式失败，尝试macOS方式
+	if !hasAMDGPU {
+		cmd := exec.Command("system_profiler", "SPDisplaysDataType")
+		output, err := cmd.CombinedOutput()
+		if err == nil && (strings.Contains(string(output), "AMD") || strings.Contains(string(output), "Radeon")) {
+			hasAMDGPU = true
+		}
+	}
+
+	// 如果前两种方式都失败，尝试Windows方式
+	if !hasAMDGPU {
+		cmd := exec.Command("wmic", "path", "win32_VideoController", "get", "name")
+		output, err := cmd.CombinedOutput()
+		if err == nil && (strings.Contains(string(output), "AMD") || strings.Contains(string(output), "Radeon")) {
+			hasAMDGPU = true
+		}
+	}
+
+	// 检测到AMD GPU后，再检查FFmpeg是否支持amf
+	if hasAMDGPU {
+		ffmpegCmd := exec.Command("ffmpeg", "-encoders")
+		ffmpegOutput, err := ffmpegCmd.CombinedOutput()
+		if err != nil {
+			return false
+		}
+		return strings.Contains(string(ffmpegOutput), "h264_amf")
+	}
+
+	return false
 }
 
 func isExist(path string) bool {
