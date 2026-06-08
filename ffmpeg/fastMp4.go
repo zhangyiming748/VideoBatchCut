@@ -95,14 +95,21 @@ func AnyVideoToMP4(fp string) error {
 
 	// 如果原文件是MP4，需要删除原文件并重命名
 	if ext == ".mp4" {
+		err = os.Rename(tempName, finalName)
+		if err != nil {
+			log.Printf("重命名文件%s失败:%v\n", finalName, err)
+			return err
+		}
 		err = os.Remove(fp)
 		if err != nil {
 			log.Printf("删除文件%s失败:%v\n", fp, err)
 			return err
 		}
-		err = os.Rename(tempName, finalName)
+	} else {
+		// 其他格式：tempName和finalName相同，只需删除原文件
+		err = os.Remove(fp)
 		if err != nil {
-			log.Printf("重命名文件%s失败:%v\n", finalName, err)
+			log.Printf("删除文件%s失败:%v\n", fp, err)
 			return err
 		}
 	}
