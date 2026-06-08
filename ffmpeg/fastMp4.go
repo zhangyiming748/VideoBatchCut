@@ -51,13 +51,11 @@ func AnyVideoToMP4(fp string) error {
 		// 使用Intel核显的H.264硬件加速编码 (QSV)
 		args = append(args, "-i", fp)
 		args = append(args, "-c:v", "h264_qsv")
-		args = append(args, "-preset", "slow")         // 慢速预设，质量更好
-		args = append(args, "-q", "18")                // 恒定质量模式，18接近无损（范围1-51，越小质量越高）
-		args = append(args, "-look_ahead", "1")        // 启用 lookahead，提升质量
-		args = append(args, "-look_ahead_depth", "40") // lookahead 深度
-		args = append(args, "-profile:v", "high")      // H.264 High Profile
-		args = append(args, "-c:a", "aac")             // AAC音频编码
-		args = append(args, "-b:a", "192k")            // 音频比特率
+		args = append(args, "-preset", "slow")       // 慢速预设，质量更好
+		args = append(args, "-global_quality", "18") // 恒定质量模式，18接近无损（范围1-51，越小质量越高）
+		args = append(args, "-profile:v", "high")    // H.264 High Profile
+		args = append(args, "-c:a", "aac")           // AAC音频编码
+		args = append(args, "-b:a", "192k")          // 音频比特率
 		args = append(args, tempName)
 	} else if hasAMD() {
 		// 使用AMD显卡的H.264硬件加速编码 (AMF/VCE)
@@ -87,10 +85,12 @@ func AnyVideoToMP4(fp string) error {
 	}
 	cmd = exec.Command("ffmpeg", args...)
 	log.Printf("执行命令:%v\n", cmd.String())
-	_, err := cmd.CombinedOutput()
+	output, err := cmd.CombinedOutput()
 	if err != nil {
-		log.Printf("ffmpeg快速处理文件%s失败:%v\n", fp, err)
+		log.Printf("ffmpeg快速处理文件%s失败:%v\nFFmpeg输出:\n%s\n", fp, err, string(output))
 		return err
+	} else {
+		log.Printf("文件%s处理成功\n", fp)
 	}
 
 	// 如果原文件是MP4，需要删除原文件并重命名
@@ -339,11 +339,9 @@ func forMkv(fp string) error {
 		args = append(args, "-i", fp)
 		// 视频流：H.264 QSV 编码
 		args = append(args, "-c:v", "h264_qsv")
-		args = append(args, "-preset", "slow")         // 慢速预设，质量更好
-		args = append(args, "-q", "18")                // 恒定质量模式，18接近无损（范围1-51，越小质量越高）
-		args = append(args, "-look_ahead", "1")        // 启用 lookahead，提升质量
-		args = append(args, "-look_ahead_depth", "40") // lookahead 深度
-		args = append(args, "-profile:v", "high")      // H.264 High Profile
+		args = append(args, "-preset", "slow")       // 慢速预设，质量更好
+		args = append(args, "-global_quality", "18") // 恒定质量模式，18接近无损（范围1-51，越小质量越高）
+		args = append(args, "-profile:v", "high")    // H.264 High Profile
 		// 音频流：转码为 FLAC（无损）
 		args = append(args, "-c:a", "flac")
 		// 字幕流：完全复制
