@@ -17,6 +17,64 @@
 - FFmpeg 命令行工具（必须在系统PATH中）
 - Go 1.25.6 或更高版本
 - （可选）NVIDIA GPU 及相关驱动
+- （可选）Intel GPU 及 VA-API/QSV 支持
+
+### ⚠️ 飞牛 OS (FnOS) 特别配置
+
+**重要**：飞牛 OS 默认普通用户没有访问 GPU 硬件设备的权限，必须先完成以下配置才能使用硬件加速功能。
+
+#### 配置步骤
+
+1. **将当前用户添加到 video 组**
+
+```bash
+sudo usermod -aG video $USER
+```
+
+2. **验证用户是否已加入 video 组**
+
+```bash
+getent group video
+# 应该看到类似输出：video:x:44:你的用户名
+```
+
+3. **完全重启系统**（必须！）
+
+```bash
+sudo reboot
+```
+
+> **注意**：仅仅注销重新登录是不够的，必须完全重启系统才能使权限生效。
+
+4. **重启后验证权限**
+
+```bash
+# 检查 DRI 设备权限
+ls -la /dev/dri/
+
+# 测试硬件加速是否可用
+ffmpeg -hwaccel vaapi -hwaccel_device /dev/dri/card1 -i input.avi -c:v h264_vaapi -qp 20 output.mp4
+```
+
+#### 替代方案：永久开放 DRI 设备权限
+
+如果不想每次重启都依赖用户组权限，可以创建 udev 规则让所有用户都能访问：
+
+```bash
+# 创建 udev 规则文件
+sudo tee /etc/udev/rules.d/99-dri-permissions.rules << 'EOF'
+# 设置 DRI 设备权限为所有用户可读写
+KERNEL=="card*", SUBSYSTEM=="drm", MODE="0666"
+KERNEL=="renderD*", SUBSYSTEM=="drm", MODE="0666"
+EOF
+
+# 重新加载 udev 规则
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+
+# 验证权限（应立即生效，无需重启）
+ls -la /dev/dri/
+```
 
 ## 安装
 
@@ -195,11 +253,17 @@ name: segment2
 - 预设：slow
 - CQ：18
 
-### 其他设备
+### Intel GPU 设备（VA-API/QSV）
 
-- 视频编码：libx265
+- 视频编码：h264_qsv（推荐）或 h264_vaapi
 - 音频编码：aac
-- 标签：hvc1
+- 质量参数：q=20（范围1-51，越小质量越高）
+- Profile：high
+
+**前置条件**：
+- 系统需安装 Intel VA-API 驱动
+- 用户需有访问 `/dev/dri` 设备的权限（见上方飞牛 OS 配置说明）
+- FFmpeg 需编译时启用 `--enable-vaapi` 和 `--enable-libvpl`
 
 ## 技术特点
 
