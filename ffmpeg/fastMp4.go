@@ -1,6 +1,7 @@
 package ffmpeg
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"os/exec"
@@ -93,6 +94,17 @@ func AnyVideoToMP4(fp string) error {
 		log.Printf("文件%s处理成功\n", fp)
 	}
 
+	// 验证输出文件是否有效
+	if fileInfo, err := os.Stat(tempName); err != nil {
+		log.Printf("输出文件%s不存在:%v\n", tempName, err)
+		return err
+	} else if fileInfo.Size() == 0 {
+		log.Printf("输出文件%s大小为0字节，转换失败，保留原文件\n", tempName)
+		// 删除失败的输出文件
+		os.Remove(tempName)
+		return fmt.Errorf("输出文件大小为0")
+	}
+
 	// 如果原文件是MP4，需要删除原文件并重命名
 	if ext == ".mp4" {
 		err = os.Rename(tempName, finalName)
@@ -172,6 +184,18 @@ func ForDji(videoPath, audioPath string) error {
 		log.Printf("ffmpeg快速处理文件%s失败:%v\n输出:%s\n", videoPath, err, string(output))
 		return err
 	}
+
+	// 验证输出文件是否有效
+	if fileInfo, err := os.Stat(tempName); err != nil {
+		log.Printf("输出文件%s不存在:%v\n", tempName, err)
+		return err
+	} else if fileInfo.Size() == 0 {
+		log.Printf("输出文件%s大小为0字节，转换失败，保留原文件\n", tempName)
+		// 删除失败的输出文件
+		os.Remove(tempName)
+		return fmt.Errorf("输出文件大小为0")
+	}
+
 	err = os.Remove(videoPath)
 	if err != nil {
 		log.Printf("删除文件%s失败:%v\n", videoPath, err)
@@ -386,6 +410,18 @@ func forMkv(fp string) error {
 		log.Printf("ffmpeg快速处理文件%s失败:%v\n", fp, err)
 		return err
 	}
+
+	// 验证输出文件是否有效
+	if fileInfo, err := os.Stat(tempName); err != nil {
+		log.Printf("输出文件%s不存在:%v\n", tempName, err)
+		return err
+	} else if fileInfo.Size() == 0 {
+		log.Printf("输出文件%s大小为0字节，转换失败，保留原文件\n", tempName)
+		// 删除失败的输出文件
+		os.Remove(tempName)
+		return fmt.Errorf("输出文件大小为0")
+	}
+
 	err = os.Remove(fp)
 	if err != nil {
 		log.Printf("删除文件%s失败:%v\n", fp, err)
