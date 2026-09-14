@@ -42,49 +42,68 @@ func AnyVideoToMP4(fp string) error {
 		args = append(args, "-tune", "hq")
 		args = append(args, "-rc", "vbr")
 		args = append(args, "-b:v", "0")
-		args = append(args, "-cq:v", "23")
+		args = append(args, "-cq:v", "19") // 恒定质量 (0-51)；片源多为二次压缩视频，19 已足够透明，再低只是为源中已有的 artifact 白付码率
 		args = append(args, "-rc-lookahead", "32")
-		args = append(args, "-spatial-aq", "1")
+		args = append(args, "-spatial-aq", "1")   // 空间自适应量化：官方说明会把额外比特分配给平坦区域
+		args = append(args, "-temporal-aq", "1")  // 时间自适应量化：改善静态高细节区域（大面积亮/暗部）
+		args = append(args, "-aq-strength", "11") // AQ 强度 1-15；不拉满，避免从复杂纹理区抽走过量码率（驱动默认 8）
 		args = append(args, "-profile:v", "high")
 		args = append(args, "-c:a", "aac")
 		args = append(args, tempName)
 	} else if hasIntel() {
 		// 使用Intel核显的H.264硬件加速编码 (QSV)
-		// 注意：飞牛 OS 需要将用户加入 video 组并重启，或配置 udev 规则
-		args = append(args, "-hwaccel", "vaapi")
-		args = append(args, "-hwaccel_device", "/dev/dri/card1")
+		// 注意：飞牛 OS 需要将用户加入 video/render 组并重启，或配置 udev 规则
+		// QSV 在 Linux 上依赖 VAAPI 子设备，必须指定 render node（renderD128），不能用 card0
+		// 以下四项均为输入选项，必须排在 -i 之前
+		args = append(args, "-init_hw_device", "qsv=qsv0:hw,child_device=/dev/dri/renderD128")
+		args = append(args, "-hwaccel", "qsv")
+		args = append(args, "-hwaccel_device", "qsv0")
 		args = append(args, "-hwaccel_output_format", "qsv")
 		args = append(args, "-i", fp)
 		args = append(args, "-c:v", "h264_qsv")
-		args = append(args, "-q", "20")           // 量化参数 (1-51，越小质量越高，20是平衡值)
-		args = append(args, "-profile:v", "high") // H.264 High Profile
-		args = append(args, "-c:a", "aac")        // AAC音频编码
-		args = append(args, "-b:a", "192k")       // 音频比特率
+		// 质量档必须用 -global_quality 而不是 -q：-q 是 -qscale 的别名，会置位 qscale flag 落入 CQP 恒定量化
+		// （全帧固定 QP、无内容自适应，平坦区最易出块），并且会让下面的 look_ahead 完全失效
+		args = append(args, "-global_quality", "18")   // LA_ICQ 质量档 (1-51，越小越好)
+		args = append(args, "-look_ahead", "1")        // 与 global_quality 配合才生效：ICQ 升级为 LA_ICQ
+		args = append(args, "-look_ahead_depth", "40") // 前瞻深度（帧），60fps 下约 0.67 秒
+		args = append(args, "-extbrc", "1")            // 扩展码率控制，放宽平坦区域的比特分配
+		args = append(args, "-mbbrc", "1")             // 宏块级码率控制，官方称可改善主观视觉质量
+		args = append(args, "-rdo", "1")               // 率失真优化
+		args = append(args, "-adaptive_i", "1")        // 允许按场景切换将 P/B 帧转为 I 帧
+		args = append(args, "-adaptive_b", "1")        // 允许按内容将 B 帧转为 P 帧
+		args = append(args, "-bf", "4")                // B 帧数量，60fps 下提升压缩效率
+		args = append(args, "-profile:v", "high")      // H.264 High Profile
+		args = append(args, "-c:a", "aac")             // AAC音频编码
+		args = append(args, "-b:a", "192k")            // 音频比特率
 		args = append(args, tempName)
 	} else if hasAMD() {
 		// 使用AMD显卡的H.264硬件加速编码 (AMF/VCE)
 		args = append(args, "-i", fp)
 		args = append(args, "-c:v", "h264_amf")
-		args = append(args, "-quality", "quality")   // 质量优先模式
-		args = append(args, "-qp_i", "18")           // I帧量化参数（越小质量越高）
-		args = append(args, "-qp_p", "20")           // P帧量化参数
-		args = append(args, "-qp_b", "22")           // B帧量化参数
-		args = append(args, "-profile", "high")      // H.264 High Profile
-		args = append(args, "-usage", "transcoding") // 转码优化模式
-		args = append(args, "-c:a", "aac")           // AAC音频编码
-		args = append(args, "-b:a", "192k")          // 音频比特率
+		args = append(args, "-usage", "high_quality") // 高质量转码预设；原 transcoding 是低码率网络传输场景
+		args = append(args, "-quality", "quality")    // 质量优先模式
+		args = append(args, "-qp_i", "18")            // I帧量化参数（越小质量越高）
+		args = append(args, "-qp_p", "20")            // P帧量化参数
+		args = append(args, "-qp_b", "22")            // B帧量化参数
+		args = append(args, "-vbaq", "true")          // 方差自适应量化，把码率优先分给平坦区域
+		args = append(args, "-preanalysis", "true")   // 预分析，改善码率分配（AMD 官方推荐设置）
+		args = append(args, "-profile", "high")       // H.264 High Profile
+		args = append(args, "-c:a", "aac")            // AAC音频编码
+		args = append(args, "-b:a", "192k")           // 音频比特率
 		args = append(args, tempName)
 	} else {
 		// 使用CPU软件编码 libx264（平衡质量和文件大小）
 		args = append(args, "-i", fp)
 		args = append(args, "-c:v", "libx264")
-		args = append(args, "-preset", "slow")     // 慢速预设，压缩效率更高
-		args = append(args, "-crf", "23")          // 恒定速率因子，23是默认值，平衡质量和大小
-		args = append(args, "-profile:v", "high")  // H.264 High Profile
-		args = append(args, "-level", "4.1")       // 兼容性更好的级别
-		args = append(args, "-pix_fmt", "yuv420p") // 广泛兼容的像素格式
-		args = append(args, "-c:a", "aac")         // AAC音频编码
-		args = append(args, "-b:a", "192k")        // 音频比特率
+		args = append(args, "-preset", "slow")    // 慢速预设，压缩效率更高
+		args = append(args, "-crf", "19")         // 恒定速率因子；二手压缩源用 19 足够透明，再低只是为已有 artifact 白付码率
+		args = append(args, "-profile:v", "high") // H.264 High Profile
+		// 不再硬写 -level：1080p60 需要 MaxMBPS 522240（Level 4.2+），而 4.1 只有 245760，会被限流降质
+		args = append(args, "-pix_fmt", "yuv420p")             // 广泛兼容的像素格式
+		args = append(args, "-x264-params", "aq-strength=1.2") // 加强平坦区域自适应量化，压制块效应（默认1.0）
+		args = append(args, "-psy-rd", "0.6:0.0")              // 压低心理视觉优化（preset slow 默认1.0:0.0），不去增强源中本不存在的纹理
+		args = append(args, "-c:a", "aac")                     // AAC音频编码
+		args = append(args, "-b:a", "192k")                    // 音频比特率
 		args = append(args, tempName)
 	}
 	cmd = exec.Command("ffmpeg", args...)
@@ -352,9 +371,11 @@ func forMkv(fp string) error {
 		args = append(args, "-tune", "hq")
 		args = append(args, "-rc", "vbr")
 		args = append(args, "-b:v", "0")
-		args = append(args, "-cq:v", "23")
+		args = append(args, "-cq:v", "19") // 恒定质量 (0-51)；片源多为二次压缩视频，19 已足够透明，再低只是为源中已有的 artifact 白付码率
 		args = append(args, "-rc-lookahead", "32")
-		args = append(args, "-spatial-aq", "1")
+		args = append(args, "-spatial-aq", "1")   // 空间自适应量化：官方说明会把额外比特分配给平坦区域
+		args = append(args, "-temporal-aq", "1")  // 时间自适应量化：改善静态高细节区域（大面积亮/暗部）
+		args = append(args, "-aq-strength", "11") // AQ 强度 1-15；不拉满，避免从复杂纹理区抽走过量码率（驱动默认 8）
 		args = append(args, "-profile:v", "high")
 		// 音频流：转码为 FLAC（无损）
 		args = append(args, "-c:a", "flac")
@@ -363,14 +384,27 @@ func forMkv(fp string) error {
 		args = append(args, tempName)
 	} else if hasIntel() {
 		// Intel QSV 硬件加速编码 - MKV 格式
-		args = append(args, "-hwaccel", "vaapi")
-		args = append(args, "-hwaccel_device", "/dev/dri/card1")
+		// QSV 在 Linux 上依赖 VAAPI 子设备，必须指定 render node（renderD128），不能用 card0
+		// 以下四项均为输入选项，必须排在 -i 之前
+		args = append(args, "-init_hw_device", "qsv=qsv0:hw,child_device=/dev/dri/renderD128")
+		args = append(args, "-hwaccel", "qsv")
+		args = append(args, "-hwaccel_device", "qsv0")
 		args = append(args, "-hwaccel_output_format", "qsv")
 		args = append(args, "-i", fp)
 		// 视频流：H.264 QSV 编码
 		args = append(args, "-c:v", "h264_qsv")
-		args = append(args, "-q", "20")           // 量化参数 (1-51，越小质量越高)
-		args = append(args, "-profile:v", "high") // H.264 High Profile
+		// 质量档必须用 -global_quality 而不是 -q：-q 是 -qscale 的别名，会置位 qscale flag 落入 CQP 恒定量化
+		// （全帧固定 QP、无内容自适应，平坦区最易出块），并且会让下面的 look_ahead 完全失效
+		args = append(args, "-global_quality", "18")   // LA_ICQ 质量档 (1-51，越小越好)
+		args = append(args, "-look_ahead", "1")        // 与 global_quality 配合才生效：ICQ 升级为 LA_ICQ
+		args = append(args, "-look_ahead_depth", "40") // 前瞻深度（帧），60fps 下约 0.67 秒
+		args = append(args, "-extbrc", "1")            // 扩展码率控制，放宽平坦区域的比特分配
+		args = append(args, "-mbbrc", "1")             // 宏块级码率控制，官方称可改善主观视觉质量
+		args = append(args, "-rdo", "1")               // 率失真优化
+		args = append(args, "-adaptive_i", "1")        // 允许按场景切换将 P/B 帧转为 I 帧
+		args = append(args, "-adaptive_b", "1")        // 允许按内容将 B 帧转为 P 帧
+		args = append(args, "-bf", "4")                // B 帧数量，60fps 下提升压缩效率
+		args = append(args, "-profile:v", "high")      // H.264 High Profile
 		// 音频流：转码为 FLAC（无损）
 		args = append(args, "-c:a", "flac")
 		// 字幕流：完全复制
@@ -381,12 +415,14 @@ func forMkv(fp string) error {
 		args = append(args, "-i", fp)
 		// 视频流：H.264 AMF 编码
 		args = append(args, "-c:v", "h264_amf")
-		args = append(args, "-quality", "quality")   // 质量优先模式
-		args = append(args, "-qp_i", "18")           // I帧量化参数（越小质量越高）
-		args = append(args, "-qp_p", "20")           // P帧量化参数
-		args = append(args, "-qp_b", "22")           // B帧量化参数
-		args = append(args, "-profile", "high")      // H.264 High Profile
-		args = append(args, "-usage", "transcoding") // 转码优化模式
+		args = append(args, "-usage", "high_quality") // 高质量转码预设；原 transcoding 是低码率网络传输场景
+		args = append(args, "-quality", "quality")    // 质量优先模式
+		args = append(args, "-qp_i", "18")            // I帧量化参数（越小质量越高）
+		args = append(args, "-qp_p", "20")            // P帧量化参数
+		args = append(args, "-qp_b", "22")            // B帧量化参数
+		args = append(args, "-vbaq", "true")          // 方差自适应量化，把码率优先分给平坦区域
+		args = append(args, "-preanalysis", "true")   // 预分析，改善码率分配（AMD 官方推荐设置）
+		args = append(args, "-profile", "high")       // H.264 High Profile
 		// 音频流：转码为 FLAC（无损）
 		args = append(args, "-c:a", "flac")
 		// 字幕流：完全复制
@@ -397,11 +433,13 @@ func forMkv(fp string) error {
 		args = append(args, "-i", fp)
 		// 视频流：H.264 软件编码
 		args = append(args, "-c:v", "libx264")
-		args = append(args, "-preset", "slow")     // 慢速预设，压缩效率更高
-		args = append(args, "-crf", "23")          // 恒定速率因子，23是默认值，平衡质量和大小
-		args = append(args, "-profile:v", "high")  // H.264 High Profile
-		args = append(args, "-level", "4.1")       // 兼容性更好的级别
-		args = append(args, "-pix_fmt", "yuv420p") // 广泛兼容的像素格式
+		args = append(args, "-preset", "slow")    // 慢速预设，压缩效率更高
+		args = append(args, "-crf", "19")         // 恒定速率因子；二手压缩源用 19 足够透明，再低只是为已有 artifact 白付码率
+		args = append(args, "-profile:v", "high") // H.264 High Profile
+		// 不再硬写 -level：1080p60 需要 MaxMBPS 522240（Level 4.2+），而 4.1 只有 245760，会被限流降质
+		args = append(args, "-pix_fmt", "yuv420p")             // 广泛兼容的像素格式
+		args = append(args, "-x264-params", "aq-strength=1.2") // 加强平坦区域自适应量化，压制块效应（默认1.0）
+		args = append(args, "-psy-rd", "0.6:0.0")              // 压低心理视觉优化（preset slow 默认1.0:0.0），不去增强源中本不存在的纹理
 		// 音频流：转码为 FLAC（无损）
 		args = append(args, "-c:a", "flac")
 		// 字幕流：完全复制

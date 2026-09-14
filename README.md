@@ -25,17 +25,19 @@
 
 #### 配置步骤
 
-1. **将当前用户添加到 video 组**
+1. **将当前用户添加到 video 和 render 组**
 
 ```bash
-sudo usermod -aG video $USER
+sudo usermod -aG video,render $USER
 ```
 
-2. **验证用户是否已加入 video 组**
+2. **验证用户是否已加入这两个组**
 
 ```bash
-getent group video
-# 应该看到类似输出：video:x:44:你的用户名
+getent group video; getent group render
+# 应该看到类似输出：
+# video:x:44:你的用户名
+# render:x:105:你的用户名
 ```
 
 3. **完全重启系统**（必须！）
@@ -49,12 +51,20 @@ sudo reboot
 4. **重启后验证权限**
 
 ```bash
-# 检查 DRI 设备权限
-ls -la /dev/dri/
+# 检查 DRI 设备权限（应能看到 card0 / renderD128）
+ls -l /dev/dri/
 
-# 测试硬件加速是否可用
-ffmpeg -hwaccel vaapi -hwaccel_device /dev/dri/card1 -i input.avi -c:v h264_vaapi -qp 20 output.mp4
+# 确认当前 FFmpeg 编译时带了 QSV 支持（有输出即支持）
+ffmpeg -hide_banner -encoders | grep qsv
+
+# 测试 QSV 硬件编码是否可用（合成测试源，不会改动你的文件）
+ffmpeg -hide_banner \
+  -init_hw_device qsv=qsv0:hw,child_device=/dev/dri/renderD128 \
+  -f lavfi -i testsrc=size=1280x720:duration=2 \
+  -c:v h264_qsv -q 20 /tmp/qsv_test.mp4
 ```
+
+> **设备节点说明**：QSV 在 Linux 上通过 VAAPI 子设备工作，必须指定 **render node**（`/dev/dri/renderD128`），不能用 primary node（`/dev/dri/card0`）。render node 的访问权限由 `render` 组控制，这也是第 1 步要同时加入 `render` 组的原因。
 
 #### 替代方案：永久开放 DRI 设备权限
 
@@ -246,24 +256,227 @@ name: segment2
 
 ## 编码参数
 
+所有分支均按 **1080p60 + 质量优先** 定档，目标是消除平坦亮部/暗部可见的宏块效应（blocking artifacts）。
+
+这里「质量优先」的含义是：**为源中真实存在的细节付出码率，但不通过极端参数去制造源中本不存在的信息**。因此只拉高与码率分配效率相关的开关（AQ、lookahead、RDO 等），而压低会凭空增强纹理的心理视觉优化。
+
+**片源前提**：处理对象绝大多数是网站下载的二次压缩视频（部分已被发布者压过一次以上）。这类片源的细节在上一代编码时已永久丢失，因此档位取「对二手源透明」而非「视觉无损」：再往下压只会把源中已有的块效应、蚊式噪声、色带忠实地一起编码进去，体积暴涨而画质毫无提升。真正能改善这类片源的是编码前的轻度去噪。
+
 ### NVIDIA GPU 设备
 
 - 视频编码：h264_nvenc
-- 音频编码：aac
-- 预设：slow
-- CQ：18
+- 音频编码：aac（MP4）/ flac（MKV）
+- 预设：p7（最高质量）+ tune hq
+- 码率控制：VBR，`-b:v 0` 不设上限，CQ=19
+- 自适应量化：`-spatial-aq 1 -temporal-aq 1 -aq-strength 11`
+  - Spatial AQ 会把额外比特分配给低复杂度平坦区域，是抑制块效应的关键开关
+  - AQ 强度范围 1-15，取 11 而不拉满：过高会从复杂纹理区抽走过量码率，片源中若无大面积平坦区就纯属浪费（驱动默认 8）
 
 ### Intel GPU 设备（VA-API/QSV）
 
-- 视频编码：h264_qsv（推荐）或 h264_vaapi
-- 音频编码：aac
-- 质量参数：q=20（范围1-51，越小质量越高）
+- 视频编码：h264_qsv
+- 音频编码：aac（MP4）/ flac（MKV）
+- 质量参数：`-global_quality 18`（LA_ICQ 模式，范围 1-51，越小质量越高）
+  - ⚠️ **不能用 `-q`**：`-q` 是 `-qscale` 的别名，会置位 qscale flag，使 QSV 落入 **CQP 恒定量化**模式 —— 全帧使用固定 QP、完全不做内容自适应，正是平坦区最容易出块的模式；而且会让 `-look_ahead` 彻底失效
+  - 官方文档的判定顺序：指定 global_quality 时，若同时置位 qscale flag → CQP；否则若开启 look_ahead → LA_ICQ；否则 → ICQ
 - Profile：high
+- 硬件设备：`-init_hw_device qsv=qsv0:hw,child_device=/dev/dri/renderD128`，配合 `-hwaccel qsv -hwaccel_output_format qsv` 实现解码与编码全链路零拷贝
+- 质量增强：`-look_ahead 1 -look_ahead_depth 40`（ICQ 升级为 LA_ICQ）、`-extbrc 1`、`-mbbrc 1`（宏块级码率控制，官方称可改善主观视觉质量）、`-rdo 1`、`-adaptive_i 1 -adaptive_b 1`、`-bf 4`
 
 **前置条件**：
-- 系统需安装 Intel VA-API 驱动
-- 用户需有访问 `/dev/dri` 设备的权限（见上方飞牛 OS 配置说明）
-- FFmpeg 需编译时启用 `--enable-vaapi` 和 `--enable-libvpl`
+- 系统需安装 Intel VA-API 驱动（Alder Lake 及更新平台使用 `iHD`）
+- 用户需同时属于 `video` 和 `render` 组（见上方飞牛 OS 配置说明）
+- FFmpeg 需编译时启用 `--enable-vaapi` 和 `--enable-libvpl`（旧版本为 `--enable-libmfx`）
+- `rdo` / `adaptive_i` / `adaptive_b` / `mbbrc` 需较新的 FFmpeg；若报 `Option xxx not found`，用 `ffmpeg -h encoder=h264_qsv` 查看当前构建支持哪些选项，并删掉不支持的行
+
+### AMD GPU 设备（AMF）
+
+- 视频编码：h264_amf
+- 音频编码：aac（MP4）/ flac（MKV）
+- 使用场景：`-usage high_quality`（影视制作级；注意 `transcoding` 是面向低码率网络传输的预设，会关闭部分 AQ 与 deblock 优化）
+- 质量偏好：`-quality quality`
+- 量化参数：qp_i=18 / qp_p=20 / qp_b=22（CQP 模式）
+- 质量增强：`-vbaq true`（方差自适应量化，优先给平坦区域分配码率）、`-preanalysis true`
+- Profile：high
+
+### CPU 软件编码（兜底）
+
+- 视频编码：libx264
+- 音频编码：aac（MP4）/ flac（MKV）
+- 预设：slow，CRF=19
+- Profile：high，像素格式 yuv420p
+- `-x264-params aq-strength=1.2`：加强平坦区域自适应量化（x264 默认 1.0）
+- `-psy-rd 0.6:0.0`：压低心理视觉优化强度（`preset slow` 默认 1.0:0.0）。psy-rd 会主动增强高频纹理让画面「看起来更锐」，但被增强的往往是噪声或压缩残留而非真实内容，属于凭空制造信息并抬高码率；调低后编码更忠实于源。设为 `0.0:0.0` 则完全关闭，但画面可能显得过度平滑
+  - 注意：`psy-rd` 的值本身包含冒号（`psy-rd:psy-trellis` 格式），而 `-x264-params` 内部也用冒号分隔多个参数，因此**必须使用 FFmpeg 暴露的独立 `-psy-rd` 选项**，不能写进 `-x264-params`
+- **不指定 `-level`**：1080p 每帧 8160 个宏块，60fps 下需 MaxMBPS ≥ 489,600，而 Level 4.1 上限仅 245,760（官方标注仅支持 1920×1080@30.1），硬写会导致限流降质；交由 x264 按输入自动选择（Level 4.2 起才满足）
+
+## 编码参数设计依据
+
+本节记录上一节中每一项取值的推导过程，包括画质目标的量化定义、片源特性分析、各编码器码率控制模式的语义差异，以及已经踩过的坑。**修改参数前请先读完本节。**
+
+### 1. 画质目标的量化定义
+
+主观要求：**1080p 分辨率下，在 50 英寸电视的正常观看距离上，纯亮部与纯暗部不出现肉眼可辨的大块状伪影。**
+
+这在编码层面对应两个具体对象：
+
+- **宏块效应（blocking artifact）**：H.264 以 16×16 宏块为单位做 DCT 变换与量化，块与块之间独立量化会产生边界不连续。量化步长过大时，边界在屏幕上表现为规则的方格状纹理。
+- **色带（banding）**：大面积平滑渐变（天空、暗部、纯色背景）的色阶被量化成有限几档，出现阶梯状断层。
+
+两者都集中出现在**低空间复杂度的平坦区域**，原因有二：
+
+1. 平坦区的 DCT 高频系数接近零，量化后容易被整体清零，块内失去梯度支撑；
+2. 人眼的对比敏感度函数（CSF）峰值落在 2~5 周/度的低频段，平坦区的任何不连续都无处遮掩；而在高纹理区，同等强度的失真会被纹理本身掩蔽（masking effect）。
+
+NVIDIA 的编码器文档对此有直接表述：
+
+> *"the low complexity flat regions are visually more perceptible to quality differences than high complexity detailed regions"*
+
+这决定了本项目的参数策略核心：**不是单纯拉高整体码率，而是通过自适应量化把码率重新分配到平坦区**。
+
+### 2. 片源特性：二次压缩视频
+
+处理对象绝大多数是网站下载的二手视频，部分已被发布者转码过一次以上。这类片源有三个必须正视的事实：
+
+1. **细节不可逆丢失**：上一代编码时被量化掉的高频信息无法恢复，任何参数都救不回来。
+2. **伪影已是像素的一部分**：块效应、蚊式噪声（mosquito noise）、色带在解码后就是实实在在的信号，编码器会忠实地把它们当作内容去编。
+3. **伪影极难压缩**：块边界与蚊噪本质是高频、无规律信号，压缩效率远低于自然纹理。
+
+由此得出两条结论：
+
+- **档位不能盲目压低**。把 CRF/ICQ 拉到「视觉无损」级别，对干净源是保真，对二手源只是花大量码率去精确保留 artifact —— 体积暴涨而观感零提升。因此档位定在「对二手源透明」（不新增可见的代际损失）而非「对原始拍摄无损」。
+- **真正能改善观感的是编码前处理（去噪/去色带），而不是编码参数**。参数只能保证「不再变差」，不能「变好」。
+
+### 3. 各编码器码率控制模式的语义差异
+
+这是本项目最容易出错、也确实错过一次的地方。**同一个数字在不同编码器的不同模式下含义完全不同。**
+
+#### 3.1 QSV：CQP / ICQ / LA_ICQ 的判定规则
+
+FFmpeg 官方文档对 QSV 的码率控制选择有明确的判定顺序：
+
+> *"When global_quality is specified, a quality-based mode is used. Specifically this means either*
+> - *CQP - constant quantizer scale, when the **qscale codec flag** is also set (the `-qscale` ffmpeg option).*
+> - *LA_ICQ - intelligent constant quality with lookahead, when the `look_ahead` option is also set.*
+> - *ICQ – intelligent constant quality otherwise."*
+
+关键在于 **`-q` 是 `-qscale` 的别名**，它会置位 qscale flag。因此：
+
+| 写法 | 实际模式 | 行为 |
+|---|---|---|
+| `-q 20` | **CQP 20** | 全帧、全区域使用固定量化步长，完全不做内容自适应 |
+| `-global_quality 18` | **ICQ 18** | 按帧复杂度动态调整 QP |
+| `-global_quality 18 -look_ahead 1` | **LA_ICQ 18** | 在 ICQ 基础上加入前瞻分析，使码率分配可以在多帧之间统筹优化 |
+
+**CQP 正是平坦区最容易出块的模式**：固定 QP 意味着天空和树林用同一个量化步长，平坦区拿不到额外比特。项目早期使用的 `-q 20` 实际上一直运行在 CQP 模式下，这是「亮部暗部有方块」的直接技术成因之一。
+
+同时要注意，在 CQP 模式下 `-look_ahead` **会被完全忽略**（判定顺序中 qscale flag 优先级最高），所以「加了 look_ahead 就升级成 LA_ICQ」这个直觉在用 `-q` 时是不成立的。
+
+#### 3.2 NVENC：CQ 与 AQ 的分工
+
+- `-rc vbr -b:v 0 -cq:v N`：VBR 模式下不设码率上限，由 CQ 值决定质量目标（等效于 x264 的 CRF）。
+- `-spatial-aq`：空间自适应量化。NVIDIA 文档描述其作用为 *"extra bits are allocated to flat regions of the frame at the cost of the regions having high spatial detail"* —— 与本项目需求完全对口。
+- `-temporal-aq`：时间自适应量化，改善帧间静止但高细节区域的参考帧质量。
+- `-aq-strength`：范围 1（最弱）~ 15（最强），**不指定时由驱动自选，默认 8**。
+
+`aq-strength` 取 **11** 而非拉满 15 的理由：AQ 是零和的重新分配，强度越高，从复杂纹理区抽走的码率越多。对本身没有大面积平坦区的素材，拉满只会造成纹理区细节损失与体积浪费，属于典型的「为参数付费」而非「为内容付费」。
+
+#### 3.3 AMF：usage 预设会连带改写一大批参数
+
+AMD 文档明确说明 `usage` 不只是个标签，它会预设包括 *"Encoding profile and level / GOP size and structure / Rate control mode and strategy / **Deblocking filter strength** / **Adaptive quantization and rate distortion optimization**"* 在内的多项参数。
+
+各取值的设计场景：
+
+| usage | 官方定义的场景 |
+|---|---|
+| `transcoding` | *"Convert high-resolution or high-bitrate videos to **low-resolution or low-bitrate** videos for transmission or storage in **bandwidth-limited network environments"* |
+| `high_quality` | *"Suitable for scenarios that require **outputting high-quality videos**, such as film and television production"* |
+
+项目早期使用的 `transcoding` 面向的是低码率网络传输，会关闭部分 AQ 与 deblock 优化 —— 与本项目目标相反，已改为 `high_quality`。
+
+另外 `-vbaq`（Variance Based Adaptive Quantization）默认 **false**，其作用是 *"Prioritize bits to parts of the image humans care about"*，需显式开启；`-preanalysis` 同理，AMD 官方推荐配置中包含 `-preanalysis true`。
+
+#### 3.4 x264：AQ 默认开启，psy-rd 也默认开启
+
+x264 与硬件编码器最大的区别是**默认就开启自适应量化**。FFmpeg 的 libx264 wrapper 把 `aq-mode` 与 `aq-strength` 的默认值都设为 `-1`（意为不干预），实际生效的是 x264 内部默认值：**`aq-mode 1`（Variance AQ）+ `aq-strength 1.0`**。而 NVENC 的 `-spatial-aq`、AMF 的 `-vbaq` 默认都是关闭的，必须显式开启。
+
+FFmpeg 对 `aq-strength` 的描述是 *"Reduces blocking and blurring in flat and textured areas"* —— 字面对应本项目需求，已通过 `-x264-params aq-strength=1.2` 轻度加强。
+
+`aq-mode` 另有两个可选档位，**目前未启用**：
+
+| 值 | 名称 | 行为 |
+|---|---|---|
+| 1（当前） | `variance` | 基于局部方差的 AQ（complexity mask） |
+| 2 | `autovariance` | Auto-variance AQ，令帧内平均 QP 偏移趋于 0，避免 mode 1 有时过度削减弱纹理区 |
+| 3 | `autovariance-biased` | Auto-variance AQ **with bias to dark scenes**，在 mode 2 基础上对暗场景额外加权 |
+
+其中 **`3` 直接针对暗部**，与本项目「纯暗部不出现方块」的要求高度契合：给暗场景分配更多码率意味着量化更细、色阶档位更多，理论上既能压住暗部块效应，也能减轻新增的 banding。代价是亮部与高复杂度区域的码率被相对削减，可能在那里产生新的损失，因此需实测对比后再决定是否启用（写法：`-x264-params aq-mode=3:aq-strength=1.2`）。
+
+注意 `aq-mode` 是 x264 专属选项，**只影响 CPU 兜底分支**。三家硬件编码器没有等价开关，各自的区域级调节手段为：QSV → `-mbbrc`（宏块级码率控制）与 `-extbrc`；NVENC → `-spatial-aq`；AMF → `-vbaq`。
+
+而 `psy-rd` 需要特别压制，见下节。
+
+### 4. 为何压低 psy-rd：区分「保真」与「造细节」
+
+`preset slow` 默认带 `psy-rd 1.0:0.0`。心理视觉优化的工作方式是**主动增强高频纹理**，让画面「看起来更锐、更有质感」，代价是码率上升。
+
+问题在于：被增强的对象往往是**噪声与压缩残留，而不是真实内容**。对二次压缩片源，这意味着把 mosquito noise 进一步放大，并为这些本不存在于原始素材的信号付费。
+
+按「为源中真实存在的细节付出码率，但不制造源中本不存在的信息」这一原则，已将 `psy-rd` 压到 `0.6:0.0`：保留一部分纹理感避免画面过度平滑（塑料感），但不再主动增强伪影。设为 `0.0:0.0` 则完全关闭，或加 `-psy 0` 彻底停用心理视觉优化。
+
+> **语法陷阱**：`psy-rd` 的值本身是 `psy-rd:psy-trellis` 冒号格式，而 `-x264-params` 内部同样用冒号分隔多个参数。写成 `-x264-params "aq-strength=1.2:psy-rd=0.6:0.0"` 会被切分为 `aq-strength=1.2`、`psy-rd=0.6` 和一个无 key 的孤立 `0.0`，导致 psy-trellis 丢失或解析失败。必须使用 FFmpeg libx264 wrapper 暴露的独立 `-psy-rd` 选项。
+
+### 5. 档位数值的定标依据
+
+统一取「对二手压缩源透明」这一标准：
+
+| 编码器 | 参数 | 取值 | 范围与方向 |
+|---|---|---|---|
+| QSV | `-global_quality` | 18 | 1~51，越小越好 |
+| NVENC | `-cq:v` | 19 | 0~51，越小越好 |
+| AMF | `-qp_i/p/b` | 18/20/22 | 0~51，分帧型固定量化 |
+| x264 | `-crf` | 19 | 0~51，越小越好 |
+
+这几个值在干净源上已接近视觉无损，在二手源上则足以避免引入新的可见代际损失。继续往下压（如 CRF 14~16）对二手源的观感提升趋近于零，而体积呈非线性增长。
+
+### 6. 硬件设备节点：必须用 render node
+
+QSV 在 Linux 上通过 VAAPI 子设备工作，FFmpeg 文档对 `-init_hw_device qsv` 的 `child_device` 选项的定义是：
+
+> *"Specify a DRM **render node** on Linux or DirectX adapter on Windows."*
+
+因此必须使用 `/dev/dri/renderD128`，**不能用 primary node `/dev/dri/card0`**：primary node 通常需要 DRM master 权限或活动的显示会话，无头转码场景下会打开失败；render node 才是为计算/转码设计的入口，其访问权限由 `render` 用户组控制（这也是权限配置要同时加入 `video` 和 `render` 组的原因）。
+
+`-hwaccel_device` 传的是 `-init_hw_device` 创建的**设备名**（此处为 `qsv0`）而非路径，文档原文：*"It can either refer to an existing device created with `-init_hw_device` by name, or it can create a new device"*。
+
+另需注意：DRM 的 `cardN` 编号**按驱动 probe 完成的先后顺序分配，而非 PCI 地址顺序**。纯核显机器上核显是 `card0`，有独显时可能排到 `card1`。项目早期曾硬编码 `/dev/dri/card1`（当时调试机的实际编号），换机后直接失效 —— 这是调试残留写进代码的典型例子。
+
+### 7. H.264 Level 与 1080p60
+
+x264 分支**不再硬写 `-level`**，原因是 Level 4.1 无法容纳 1080p60。
+
+宏块数计算：`ceil(1920/16) × ceil(1080/16) = 120 × 68 = 8,160 宏块/帧`
+
+| Level | MaxMBPS | MaxFS | MaxDpbMbs | 官方标注的 1080p 支持 |
+|---|---|---|---|---|
+| 4.1 | 245,760 | 8,192 | 32,768 | 1920×1080@**30.1** |
+| 4.2 | 522,240 | 8,704 | 34,816 | 1920×1080@**64.0** |
+
+- 1080p**30**：8,160 × 30 = 244,800 ≤ 245,760，勉强够用（余量仅 0.4%）
+- 1080p**60**：8,160 × 60 = **489,600 > 245,760**，超出近一倍，x264 会告警 `frame MB size > level limit` 并被迫限流降质
+
+还有一个隐性损失：Level 4.1 的 MaxDpbMbs 为 32,768，除以每帧 8,160 宏块 = **最多 4 个参考帧**，而 `preset slow` 默认希望使用 5 个，会被 level 卡掉，压缩效率下降 —— 同等 CRF 下反而更容易出现块效应。
+
+删除 `-level` 后由 x264 依据实际输入自动选择，是最稳妥的做法。
+
+### 8. 尚未落地的一项：去噪预处理
+
+针对第 2 节所述的片源特性，**编码前的轻度去噪是唯一能真正提升二手源观感的手段**，且能同时减小体积：压缩噪声不可压缩，清掉后码率才能用在真实内容上。目前尚未加入，因为存在两个待定因素：
+
+- **GPU 路径兼容性**：`vpp_qsv=denoise=N` 可在保持零拷贝的前提下于 GPU 去噪，但需确认具体 FFmpeg 构建与 iHD 驱动是否支持（`ffmpeg -h filter=vpp_qsv | grep -i denoise`）。
+- **去噪与色带的对冲**：去除噪声后，原本被噪声「打散」掩盖的色阶断层会暴露出来，因此需要配套 `gradfun` 做抖动补偿；而 `gradfun` 是 CPU 滤镜，加入 QSV 全硬件链路需要 `hwdownload`/`hwupload`，会破坏零拷贝并显著拖慢 N100 这类低功耗平台。
+
+在确定方案前，**请勿仅靠继续压低档位来追求「干净」** —— 那条路对二手源无效。
 
 ## 技术特点
 
