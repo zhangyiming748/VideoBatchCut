@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 func AnyVideoToMP4(fp string) error {
@@ -35,6 +36,8 @@ func AnyVideoToMP4(fp string) error {
 	// 	return nil
 	// }
 	if hasNvidia() {
+		log.Println("[分支] AnyVideoToMP4 使用 NVIDIA NVENC 硬件编码")
+		time.Sleep(3 * time.Second)
 		// 构建ffmpeg命令参数
 		args = append(args, "-i", fp)
 		args = append(args, "-c:v", "h264_nvenc")
@@ -51,6 +54,8 @@ func AnyVideoToMP4(fp string) error {
 		args = append(args, "-c:a", "aac")
 		args = append(args, tempName)
 	} else if hasIntel() {
+		log.Println("[分支] AnyVideoToMP4 使用 Intel QSV 硬件编码")
+		time.Sleep(3 * time.Second)
 		// 使用Intel核显的H.264硬件加速编码 (QSV)
 		// 注意：飞牛 OS 需要将用户加入 video/render 组并重启，或配置 udev 规则
 		// QSV 在 Linux 上依赖 VAAPI 子设备，必须指定 render node（renderD128），不能用 card0
@@ -77,6 +82,8 @@ func AnyVideoToMP4(fp string) error {
 		args = append(args, "-b:a", "192k")            // 音频比特率
 		args = append(args, tempName)
 	} else if hasAMD() {
+		log.Println("[分支] AnyVideoToMP4 使用 AMD AMF 硬件编码")
+		time.Sleep(3 * time.Second)
 		// 使用AMD显卡的H.264硬件加速编码 (AMF/VCE)
 		args = append(args, "-i", fp)
 		args = append(args, "-c:v", "h264_amf")
@@ -92,6 +99,8 @@ func AnyVideoToMP4(fp string) error {
 		args = append(args, "-b:a", "192k")           // 音频比特率
 		args = append(args, tempName)
 	} else {
+		log.Println("[分支] AnyVideoToMP4 使用 CPU libx264 软件编码")
+		time.Sleep(3 * time.Second)
 		// 使用CPU软件编码 libx264（平衡质量和文件大小）
 		args = append(args, "-i", fp)
 		args = append(args, "-c:v", "libx264")
@@ -363,6 +372,8 @@ func forMkv(fp string) error {
 	)
 	tempName = strings.Replace(fp, filepath.Ext(fp), "_tmp.mkv", 1)
 	if hasNvidia() {
+		log.Println("[分支] forMkv 使用 NVIDIA NVENC 硬件编码")
+		time.Sleep(3 * time.Second)
 		// NVIDIA GPU 硬件加速编码 - MKV 格式
 		args = append(args, "-i", fp)
 		// 视频流：H.264 NVENC 编码
@@ -383,6 +394,8 @@ func forMkv(fp string) error {
 		args = append(args, "-c:s", "copy")
 		args = append(args, tempName)
 	} else if hasIntel() {
+		log.Println("[分支] forMkv 使用 Intel QSV 硬件编码")
+		time.Sleep(3 * time.Second)
 		// Intel QSV 硬件加速编码 - MKV 格式
 		// QSV 在 Linux 上依赖 VAAPI 子设备，必须指定 render node（renderD128），不能用 card0
 		// 以下四项均为输入选项，必须排在 -i 之前
@@ -411,6 +424,8 @@ func forMkv(fp string) error {
 		args = append(args, "-c:s", "copy")
 		args = append(args, tempName)
 	} else if hasAMD() {
+		log.Println("[分支] forMkv 使用 AMD AMF 硬件编码")
+		time.Sleep(3 * time.Second)
 		// AMD AMF 硬件加速编码 - MKV 格式
 		args = append(args, "-i", fp)
 		// 视频流：H.264 AMF 编码
@@ -429,6 +444,8 @@ func forMkv(fp string) error {
 		args = append(args, "-c:s", "copy")
 		args = append(args, tempName)
 	} else {
+		log.Println("[分支] forMkv 使用 CPU libx264 软件编码")
+		time.Sleep(3 * time.Second)
 		// CPU 软件编码 libx264 - MKV 格式
 		args = append(args, "-i", fp)
 		// 视频流：H.264 软件编码

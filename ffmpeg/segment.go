@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 )
 
 // HasH264NVENC 检测是否支持 NVIDIA H264 NVENC 硬件编码
@@ -80,6 +81,8 @@ func CutBySegment(index, total, mp4, start, end string) error {
 		cmd.Args = append(cmd.Args, "-to", end)
 	}
 	if HasH264NVENC() {
+		log.Println("[分支] CutBySegment 使用 NVIDIA NVENC 硬件编码")
+		time.Sleep(3 * time.Second)
 		cmd.Args = append(cmd.Args, "-c:v", "h264_nvenc")
 		cmd.Args = append(cmd.Args, "-preset", "slow")
 		cmd.Args = append(cmd.Args, "-cq", "18")
@@ -87,6 +90,8 @@ func CutBySegment(index, total, mp4, start, end string) error {
 		cmd.Args = append(cmd.Args, "-profile:v", "high")
 		cmd.Args = append(cmd.Args, "-level", "5.1")
 	} else if fast := os.Getenv("FASTCUT"); fast == "yes" {
+		log.Println("[分支] CutBySegment 使用 CPU libx264 快速模式")
+		time.Sleep(3 * time.Second)
 		// libx264 快速模式：平衡速度和质量
 		cmd.Args = append(cmd.Args, "-c:v", "libx264")
 		cmd.Args = append(cmd.Args, "-preset", "fast")
@@ -94,6 +99,8 @@ func CutBySegment(index, total, mp4, start, end string) error {
 		cmd.Args = append(cmd.Args, "-profile:v", "high")
 		cmd.Args = append(cmd.Args, "-level", "4.1")
 	} else {
+		log.Println("[分支] CutBySegment 使用 CPU libx265 高质量模式")
+		time.Sleep(3 * time.Second)
 		// libx265 高质量模式：最佳压缩率
 		cmd.Args = append(cmd.Args, "-c:v", "libx265")
 		cmd.Args = append(cmd.Args, "-tag:v", "hvc1")
