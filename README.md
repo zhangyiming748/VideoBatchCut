@@ -478,6 +478,71 @@ x264 分支**不再硬写 `-level`**，原因是 Level 4.1 无法容纳 1080p60�
 
 在确定方案前，**请勿仅靠继续压低档位来追求「干净」** —— 那条路对二手源无效。
 
+### 9. Intel 分支从 QSV 迁移到 VAAPI 的完整查证（容器化部署）
+
+> 本节记录把 `fastmp4` 的 Intel 硬件分支由 QSV 改为 VAAPI 时的完整推理链：**背景思考 → 网络验证 → 源码级查证 → 技术推论 → 最终结果**。触发原因是项目在 Linux 服务器上以 Docker 容器运行，实测 QSV 在容器内不易穿透，而 VAAPI + render node 稳定可用。
+>
+> ⚠️ 本节描述的是 Intel 分支改用 VAAPI 后的**现状**；上文《编码参数》里「Intel GPU 设备（VA-API/QSV）」小节记录的仍是迁移前的 QSV 参数，如有冲突以本节为准。
+
+#### 9.1 背景与初始思考
+
+容器内已验证可用的命令，其硬件相关参数为：
+
+```text
+-hwaccel vaapi -hwaccel_device /dev/dri/renderD128 -hwaccel_output_format vaapi
+-c:v h264_vaapi
+```
+
+需求是：硬件部分换成上述 VAAPI 参数，画质参数尽量沿用代码原设定（原 QSV 分支为 `-global_quality 18` 的 LA_ICQ）。
+
+第一个必须正视的问题：**原 QSV 分支里的一大批画质/增强参数是 QSV 私有选项，`h264_vaapi` 根本不认识**，照搬会让整条命令因「未识别选项」直接失败。所以「只换硬件、画质参数原样不动」这个诉求在技术上做不到，必须先分清哪些参数属于谁。
+
+#### 9.2 网络验证（先厘清参数归属与驱动能力）
+
+1. **FFmpeg 官方 codec 文档 §9.33「VAAPI encoders」**：
+   - `-rc_mode` 可选 `auto / CQP / CBR / VBR / ICQ / QVBR / AVBR`，但原文写明「*A given driver may only support a subset of modes*」（驱动可能只支持其中一部分）。
+   - `q / global_quality` 是 VAAPI 编码器通用的标准 libavcodec 选项，语义为「值越大 → 体积越小 / 画质越差」（QP 型刻度）。
+2. **FFmpeg 官方文档 §9.31.5「H264 options for h264_qsv」**：`extbrc / mbbrc / rdo / look_ahead / look_ahead_depth / adaptive_i / adaptive_b` 全部列在 **h264_qsv 专属选项**下 → 证实它们是 QSV 私有、VAAPI 无对应项，必须移除。
+3. **ArchWiki（Linux 实操权威）**：`h264_vaapi` 的恒定画质定标为「**18 = 视觉无损，20 起才有极轻微损失**」。这独立印证了代码里 `18` 这个数值对 h264_vaapi 同样合适，无需改动。
+4. **Intel iHD 是否支持 ICQ**：Arch 论坛有人用 `vainfo -a` 打印 iHD 驱动的 `VAConfigAttribRateControl`，实测结论——**ICQ 对 H264 / VP9 支持，HEVC / AV1 不支持**；配套的 GitHub `intel/media-driver` issue #1736 也显示 ICQ 失败发生在 **HEVC**（`hevc_qsv`）上、改 CQP 即正常。本项目用的是 **h264**_vaapi，正落在「支持 ICQ」的一侧。
+
+#### 9.3 最后的查证：直接读 FFmpeg 源码
+
+网络资料对「ICQ 如何触发、`global_quality` 如何取值」说法不一（甚至有把 `-q:v` 方向讲反的），最终以 `libavcodec/vaapi_encode.c` 源码为准（约 L1290–L1433）：
+
+- **码率控制模式的自动选择顺序**（源码注释 + `TRY_RC_MODE` 宏，`fail` 参数决定不支持时是报错还是跳过）：
+  - `if (ctx->explicit_rc_mode) TRY_RC_MODE(mode, fail=1)` —— **显式 `-rc_mode ICQ` 时 fail=1**：驱动不支持就 `av_log(ERROR) + return EINVAL`，整条命令失败。
+  - `if (flags & AV_CODEC_FLAG_QSCALE) TRY_RC_MODE(CQP, fail=1)` —— 用 `-q:v` 会置位 qscale flag，**强制落入 CQP**。
+  - `if (global_quality > 0) { TRY_RC_MODE(ICQ, fail=0); TRY_RC_MODE(CQP, fail=0); }` —— **只给 `-global_quality`（无 qscale、无 bitrate）时，先试 ICQ、不支持再优雅回退 CQP，两者 fail=0，永不硬失败**。
+- **质量档数值映射**：
+  - 走 `-global_quality N`（无 qscale flag）→ `rc_quality = global_quality`，即**原样等于 N**。
+  - 走 `-q:v N`（有 qscale flag）→ `rc_quality = global_quality / FF_QP2LAMBDA`。
+
+#### 9.4 技术推论
+
+把源码结论对照到本项目，得到三条：
+
+1. **画质档必须写 `-global_quality 18`，绝不能写 `-q:v 18`**：后者会因 qscale flag 强制落入 CQP（固定量化、无内容自适应），正是项目一直规避的「平坦区最易出块」模式。这与 §3.1 记录的 QSV `-q` 老坑**完全同构**——同一个陷阱在 VAAPI 上换个马甲又出现了一次。
+2. **不要显式写 `-rc_mode ICQ`**：虽然 Intel iHD 的 H264 支持 ICQ，但显式指定会让 fail=1；一旦换到不支持 ICQ 的老驱动/老平台，会直接报错中断整批任务。而只写 `-global_quality 18`，ffmpeg 会**自动优先 ICQ、不支持则回退 CQP**——在用户的 Intel 服务器上会走 ICQ（内容自适应，符合项目画质要求），极老驱动上也不会崩。对批量工具而言这是更稳的选择。
+3. **数值 18 无需改动**：源码确认 `-global_quality 18` 原样映射为质量档 18；ArchWiki 又独立验证 h264_vaapi 的 18 = 视觉无损。与项目「对二手源透明」的定标一致。
+
+#### 9.5 最终结果
+
+`AnyVideoToMP4` 与 `forMkv` 两处 Intel 分支统一改为：
+
+```text
+# 输入选项（必须排在 -i 之前）
+-hwaccel vaapi -hwaccel_device /dev/dri/renderD128 -hwaccel_output_format vaapi
+# 编码
+-c:v h264_vaapi -global_quality 18 -bf 4 -profile:v high
+```
+
+- **移除** 6 个 QSV 私有项：`look_ahead / look_ahead_depth / extbrc / mbbrc / rdo / adaptive_i / adaptive_b`（`h264_vaapi` 不识别，留着会报错）。
+- **去掉** 原 QSV 的 `-init_hw_device qsv=...`：纯 VAAPI 解码 + 编码零拷贝路径不需要它，用户验证的命令也未使用。
+- `hasIntel()` 的编码器能力检测由 `h264_qsv` 改为 `h264_vaapi`，否则容器内只有 VAAPI 时该分支不会触发、会掉到 CPU 软编。
+- 容器需透传设备：`docker run --device /dev/dri/renderD128 ...`，且运行用户属于 `video`、`render` 组。
+- **验证**：`go build ./...` 与 `GOOS=linux GOARCH=amd64 go build ./...` 均通过，`gofmt` 干净。
+
 ## 技术特点
 
 ### 精确切割技术

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -54,32 +55,30 @@ func AnyVideoToMP4(fp string) error {
 		args = append(args, "-c:a", "aac")
 		args = append(args, tempName)
 	} else if hasIntel() {
-		log.Println("[分支] AnyVideoToMP4 使用 Intel QSV 硬件编码")
+		log.Println("[分支] AnyVideoToMP4 使用 Intel VAAPI 硬件编码")
 		time.Sleep(3 * time.Second)
-		// 使用Intel核显的H.264硬件加速编码 (QSV)
-		// 注意：飞牛 OS 需要将用户加入 video/render 组并重启，或配置 udev 规则
-		// QSV 在 Linux 上依赖 VAAPI 子设备，必须指定 render node（renderD128），不能用 card0
-		// 以下四项均为输入选项，必须排在 -i 之前
-		args = append(args, "-init_hw_device", "qsv=qsv0:hw,child_device=/dev/dri/renderD128")
-		args = append(args, "-hwaccel", "qsv")
-		args = append(args, "-hwaccel_device", "qsv0")
-		args = append(args, "-hwaccel_output_format", "qsv")
+		// 使用 Intel 核显的 H.264 硬件加速编码 (VAAPI)
+		// 容器化部署经实测：QSV 在容器内不易穿透，改用 VAAPI + render node 稳定可用
+		// 需将 /dev/dri/renderD128 透传进容器（--device /dev/dri/renderD128），并把用户加入 video/render 组
+		// 以下三项均为输入选项，必须排在 -i 之前
+		args = append(args, "-hwaccel", "vaapi")
+		args = append(args, "-hwaccel_device", "/dev/dri/renderD128")
+		args = append(args, "-hwaccel_output_format", "vaapi")
 		args = append(args, "-i", fp)
-		args = append(args, "-c:v", "h264_qsv")
-		// 质量档必须用 -global_quality 而不是 -q：-q 是 -qscale 的别名，会置位 qscale flag 落入 CQP 恒定量化
-		// （全帧固定 QP、无内容自适应，平坦区最易出块），并且会让下面的 look_ahead 完全失效
-		args = append(args, "-global_quality", "18")   // LA_ICQ 质量档 (1-51，越小越好)
-		args = append(args, "-look_ahead", "1")        // 与 global_quality 配合才生效：ICQ 升级为 LA_ICQ
-		args = append(args, "-look_ahead_depth", "40") // 前瞻深度（帧），60fps 下约 0.67 秒
-		args = append(args, "-extbrc", "1")            // 扩展码率控制，放宽平坦区域的比特分配
-		args = append(args, "-mbbrc", "1")             // 宏块级码率控制，官方称可改善主观视觉质量
-		args = append(args, "-rdo", "1")               // 率失真优化
-		args = append(args, "-adaptive_i", "1")        // 允许按场景切换将 P/B 帧转为 I 帧
-		args = append(args, "-adaptive_b", "1")        // 允许按内容将 B 帧转为 P 帧
-		args = append(args, "-bf", "4")                // B 帧数量，60fps 下提升压缩效率
-		args = append(args, "-profile:v", "high")      // H.264 High Profile
-		args = append(args, "-c:a", "aac")             // AAC音频编码
-		args = append(args, "-b:a", "192k")            // 音频比特率
+		args = append(args, "-c:v", "h264_vaapi")
+		// 画质：沿用代码原有的恒定质量档 global_quality 18
+		// 关键（据 ffmpeg vaapi_encode.c 源码）：只给 -global_quality 而不加 -rc_mode/-q:v 时，
+		// ffmpeg 自动优先选 ICQ（内容自适应，Intel iHD 的 H264 支持 VA_RC_ICQ），驱动不支持时再优雅回退 CQP；
+		// 不要显式写 -rc_mode ICQ——那样驱动若不支持会直接 EINVAL 报错、整批任务失败；
+		// 也不要用 -q:v——它会置位 QSCALE flag 强制落入 CQP（与 QSV 的老坑同构）
+		// 18 经 ArchWiki 实测为 h264_vaapi 视觉无损档（20 起才有极轻微损失）
+		// 注意：QSV 专属选项（look_ahead/look_ahead_depth/extbrc/mbbrc/rdo/adaptive_i/adaptive_b）
+		// 在 h264_vaapi 下不存在，会被判为未识别选项导致整条命令失败，故移除
+		args = append(args, "-global_quality", "18") // 质量档 (1-51，越小越好)，与代码原值一致
+		args = append(args, "-bf", "4")              // B 帧数量，60fps 下提升压缩效率
+		args = append(args, "-profile:v", "high")    // H.264 High Profile
+		args = append(args, "-c:a", "aac")           // AAC音频编码
+		args = append(args, "-b:a", "192k")          // 音频比特率
 		args = append(args, tempName)
 	} else if hasAMD() {
 		log.Println("[分支] AnyVideoToMP4 使用 AMD AMF 硬件编码")
@@ -97,6 +96,23 @@ func AnyVideoToMP4(fp string) error {
 		args = append(args, "-profile", "high")       // H.264 High Profile
 		args = append(args, "-c:a", "aac")            // AAC音频编码
 		args = append(args, "-b:a", "192k")           // 音频比特率
+		args = append(args, tempName)
+	} else if hasAppleSilicon() {
+		log.Println("[分支] AnyVideoToMP4 使用 Apple VideoToolbox 硬件编码")
+		time.Sleep(3 * time.Second)
+		// Apple Silicon（M1/M2/M3/M4 系列）自带媒体引擎，使用 VideoToolbox 硬件 H.264 编码
+		args = append(args, "-i", fp)
+		args = append(args, "-c:v", "h264_videotoolbox")
+		// -q:v 是 VideoToolbox 的恒定质量档，范围 1-100 且“越大画质越高”
+		//（已上机验证：同源 q30≈388KB、q90≈3.86MB）；与 libx264 crf19 标定后取 70：
+		// VideoToolbox 是比 x264 slow 更简单的编码器，同等体积画质略逊，稍抬高质量档以保证对二手压缩源透明
+		args = append(args, "-q:v", "70")
+		args = append(args, "-profile:v", "high") // H.264 High Profile
+		args = append(args, "-coder", "cabac")    // CABAC 熵编码，压缩效率优于默认 CAVLC
+		args = append(args, "-spatial_aq", "1")   // 空间自适应量化（macOS 支持），把额外比特分配给平坦区域，压制块效应
+		args = append(args, "-allow_sw", "1")     // 硬件编码器不可用时回退到 VideoToolbox 软件编码，避免整批任务失败
+		args = append(args, "-c:a", "aac")        // AAC音频编码
+		args = append(args, "-b:a", "192k")       // 音频比特率
 		args = append(args, tempName)
 	} else {
 		log.Println("[分支] AnyVideoToMP4 使用 CPU libx264 软件编码")
@@ -292,14 +308,14 @@ func hasIntel() bool {
 		}
 	}
 
-	// 检测到Intel GPU后，再检查FFmpeg是否支持qsv
+	// 检测到Intel GPU后，再检查FFmpeg是否支持vaapi（本分支已改用 VAAPI 编码）
 	if hasIntelGPU {
 		ffmpegCmd := exec.Command("ffmpeg", "-encoders")
 		output, err := ffmpegCmd.CombinedOutput()
 		if err != nil {
 			return false
 		}
-		return strings.Contains(string(output), "h264_qsv")
+		return strings.Contains(string(output), "h264_vaapi")
 	}
 
 	return false
@@ -352,6 +368,22 @@ func hasAMD() bool {
 	return false
 }
 
+func hasAppleSilicon() bool {
+	// 检测是否为 Apple Silicon（M1/M2/M3/M4 系列）芯片：macOS + arm64 架构
+	// 注意：若用户误在 Apple Silicon 上运行 amd64 二进制（Rosetta 转译），GOARCH 会是 amd64 而落入 CPU 分支；
+	// release 已提供 darwin/arm64 构建，正常下载 arm64 版本即可命中此分支
+	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
+		return false
+	}
+	// 确认 FFmpeg 编译进了 VideoToolbox 编码器
+	ffmpegCmd := exec.Command("ffmpeg", "-encoders")
+	output, err := ffmpegCmd.CombinedOutput()
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(output), "h264_videotoolbox")
+}
+
 func isExist(path string) bool {
 	// 检查文件或目录是否存在
 	_, err := os.Stat(path)
@@ -394,30 +426,25 @@ func forMkv(fp string) error {
 		args = append(args, "-c:s", "copy")
 		args = append(args, tempName)
 	} else if hasIntel() {
-		log.Println("[分支] forMkv 使用 Intel QSV 硬件编码")
+		log.Println("[分支] forMkv 使用 Intel VAAPI 硬件编码")
 		time.Sleep(3 * time.Second)
-		// Intel QSV 硬件加速编码 - MKV 格式
-		// QSV 在 Linux 上依赖 VAAPI 子设备，必须指定 render node（renderD128），不能用 card0
-		// 以下四项均为输入选项，必须排在 -i 之前
-		args = append(args, "-init_hw_device", "qsv=qsv0:hw,child_device=/dev/dri/renderD128")
-		args = append(args, "-hwaccel", "qsv")
-		args = append(args, "-hwaccel_device", "qsv0")
-		args = append(args, "-hwaccel_output_format", "qsv")
+		// Intel VAAPI 硬件加速编码 - MKV 格式
+		// 容器化部署经实测：QSV 在容器内不易穿透，改用 VAAPI + render node 稳定可用
+		// 需将 /dev/dri/renderD128 透传进容器，并把用户加入 video/render 组
+		// 以下三项均为输入选项，必须排在 -i 之前
+		args = append(args, "-hwaccel", "vaapi")
+		args = append(args, "-hwaccel_device", "/dev/dri/renderD128")
+		args = append(args, "-hwaccel_output_format", "vaapi")
 		args = append(args, "-i", fp)
-		// 视频流：H.264 QSV 编码
-		args = append(args, "-c:v", "h264_qsv")
-		// 质量档必须用 -global_quality 而不是 -q：-q 是 -qscale 的别名，会置位 qscale flag 落入 CQP 恒定量化
-		// （全帧固定 QP、无内容自适应，平坦区最易出块），并且会让下面的 look_ahead 完全失效
-		args = append(args, "-global_quality", "18")   // LA_ICQ 质量档 (1-51，越小越好)
-		args = append(args, "-look_ahead", "1")        // 与 global_quality 配合才生效：ICQ 升级为 LA_ICQ
-		args = append(args, "-look_ahead_depth", "40") // 前瞻深度（帧），60fps 下约 0.67 秒
-		args = append(args, "-extbrc", "1")            // 扩展码率控制，放宽平坦区域的比特分配
-		args = append(args, "-mbbrc", "1")             // 宏块级码率控制，官方称可改善主观视觉质量
-		args = append(args, "-rdo", "1")               // 率失真优化
-		args = append(args, "-adaptive_i", "1")        // 允许按场景切换将 P/B 帧转为 I 帧
-		args = append(args, "-adaptive_b", "1")        // 允许按内容将 B 帧转为 P 帧
-		args = append(args, "-bf", "4")                // B 帧数量，60fps 下提升压缩效率
-		args = append(args, "-profile:v", "high")      // H.264 High Profile
+		// 视频流：H.264 VAAPI 编码
+		args = append(args, "-c:v", "h264_vaapi")
+		// 画质：沿用代码原有的恒定质量档 global_quality 18
+		// 只给 -global_quality（不加 -rc_mode/-q:v）时 ffmpeg 自动优先 ICQ、不支持则优雅回退 CQP；
+		// 显式 -rc_mode ICQ 会在驱动不支持时直接报错，-q:v 会强制 CQP，两者都不要用
+		// QSV 专属选项（look_ahead/look_ahead_depth/extbrc/mbbrc/rdo/adaptive_i/adaptive_b）在 h264_vaapi 下不存在，移除以免命令失败
+		args = append(args, "-global_quality", "18") // 质量档 (1-51，越小越好)，与代码原值一致
+		args = append(args, "-bf", "4")              // B 帧数量，60fps 下提升压缩效率
+		args = append(args, "-profile:v", "high")    // H.264 High Profile
 		// 音频流：转码为 FLAC（无损）
 		args = append(args, "-c:a", "flac")
 		// 字幕流：完全复制
@@ -438,6 +465,24 @@ func forMkv(fp string) error {
 		args = append(args, "-vbaq", "true")          // 方差自适应量化，把码率优先分给平坦区域
 		args = append(args, "-preanalysis", "true")   // 预分析，改善码率分配（AMD 官方推荐设置）
 		args = append(args, "-profile", "high")       // H.264 High Profile
+		// 音频流：转码为 FLAC（无损）
+		args = append(args, "-c:a", "flac")
+		// 字幕流：完全复制
+		args = append(args, "-c:s", "copy")
+		args = append(args, tempName)
+	} else if hasAppleSilicon() {
+		log.Println("[分支] forMkv 使用 Apple VideoToolbox 硬件编码")
+		time.Sleep(3 * time.Second)
+		// Apple Silicon（M1/M2/M3/M4 系列）自带媒体引擎，使用 VideoToolbox 硬件 H.264 编码 - MKV 格式
+		args = append(args, "-i", fp)
+		// 视频流：H.264 VideoToolbox 编码
+		args = append(args, "-c:v", "h264_videotoolbox")
+		// -q:v 是 VideoToolbox 的恒定质量档，范围 1-100 且“越大画质越高”，取 70 与 libx264 crf19 对标
+		args = append(args, "-q:v", "70")
+		args = append(args, "-profile:v", "high") // H.264 High Profile
+		args = append(args, "-coder", "cabac")    // CABAC 熵编码，压缩效率优于默认 CAVLC
+		args = append(args, "-spatial_aq", "1")   // 空间自适应量化（macOS 支持），把额外比特分配给平坦区域，压制块效应
+		args = append(args, "-allow_sw", "1")     // 硬件编码器不可用时回退到 VideoToolbox 软件编码，避免整批任务失败
 		// 音频流：转码为 FLAC（无损）
 		args = append(args, "-c:a", "flac")
 		// 字幕流：完全复制
