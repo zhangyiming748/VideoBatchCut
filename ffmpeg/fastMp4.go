@@ -55,30 +55,28 @@ func AnyVideoToMP4(fp string) error {
 		args = append(args, "-c:a", "aac")
 		args = append(args, tempName)
 	} else if hasIntel() {
-		log.Println("[分支] AnyVideoToMP4 使用 Intel VAAPI 硬件编码")
+		log.Println("[分支] AnyVideoToMP4 使用 Intel QSV 硬件编码")
 		time.Sleep(3 * time.Second)
-		// 使用 Intel 核显的 H.264 硬件加速编码 (VAAPI)
-		// 容器化部署经实测：QSV 在容器内不易穿透，改用 VAAPI + render node 稳定可用
-		// 需将 /dev/dri/renderD128 透传进容器（--device /dev/dri/renderD128），并把用户加入 video/render 组
-		// 以下三项均为输入选项，必须排在 -i 之前
-		args = append(args, "-hwaccel", "vaapi")
-		args = append(args, "-hwaccel_device", "/dev/dri/renderD128")
-		args = append(args, "-hwaccel_output_format", "vaapi")
+		// 使用 Intel 核显的 H.264 硬件加速编码 (QSV，Quick Sync Video)
+		// 本分支运行于 Windows，QSV 会自动选用默认显卡适配器，无需指定 device 路径
+		// 以下两项均为输入选项，必须排在 -i 之前
+		args = append(args, "-hwaccel", "qsv")
+		args = append(args, "-hwaccel_output_format", "qsv")
 		args = append(args, "-i", fp)
-		args = append(args, "-c:v", "h264_vaapi")
-		// 画质：沿用代码原有的恒定质量档 global_quality 18
-		// 关键（据 ffmpeg vaapi_encode.c 源码）：只给 -global_quality 而不加 -rc_mode/-q:v 时，
-		// ffmpeg 自动优先选 ICQ（内容自适应，Intel iHD 的 H264 支持 VA_RC_ICQ），驱动不支持时再优雅回退 CQP；
-		// 不要显式写 -rc_mode ICQ——那样驱动若不支持会直接 EINVAL 报错、整批任务失败；
-		// 也不要用 -q:v——它会置位 QSCALE flag 强制落入 CQP（与 QSV 的老坑同构）
-		// 18 经 ArchWiki 实测为 h264_vaapi 视觉无损档（20 起才有极轻微损失）
-		// 注意：QSV 专属选项（look_ahead/look_ahead_depth/extbrc/mbbrc/rdo/adaptive_i/adaptive_b）
-		// 在 h264_vaapi 下不存在，会被判为未识别选项导致整条命令失败，故移除
-		args = append(args, "-global_quality", "18") // 质量档 (1-51，越小越好)，与代码原值一致
-		args = append(args, "-bf", "4")              // B 帧数量，60fps 下提升压缩效率
-		args = append(args, "-profile:v", "high")    // H.264 High Profile
-		args = append(args, "-c:a", "aac")           // AAC音频编码
-		args = append(args, "-b:a", "192k")          // 音频比特率
+		args = append(args, "-c:v", "h264_qsv")
+		// 画质：沿用代码原有的恒定质量档 global_quality 18（视觉无损档，与其它分支口径一致）
+		// 只给 -global_quality 时 QSV 默认走 ICQ（内容自适应恒定质量）；再开启 look_ahead 会升级为 LA_ICQ，画质更好
+		args = append(args, "-preset", "veryslow")     // QSV 质量优先档，压缩效率最高
+		args = append(args, "-global_quality", "18")   // 质量档 (1-51，越小越好)，与代码原值一致
+		args = append(args, "-look_ahead", "1")        // 前瞻码率控制（LA_ICQ），改善复杂场景的比特分配
+		args = append(args, "-look_ahead_depth", "32") // 前瞻帧数
+		args = append(args, "-extbrc", "1")            // 扩展码率控制，进一步平滑质量
+		args = append(args, "-adaptive_i", "1")        // 自适应插入 I 帧
+		args = append(args, "-adaptive_b", "1")        // 自适应插入 B 帧
+		args = append(args, "-bf", "4")                // B 帧数量，60fps 下提升压缩效率
+		args = append(args, "-profile:v", "high")      // H.264 High Profile
+		args = append(args, "-c:a", "aac")             // AAC音频编码
+		args = append(args, "-b:a", "192k")            // 音频比特率
 		args = append(args, tempName)
 	} else if hasAMD() {
 		log.Println("[分支] AnyVideoToMP4 使用 AMD AMF 硬件编码")
@@ -277,48 +275,20 @@ func hasNvidia() bool {
 }
 
 func hasIntel() bool {
-	// 检查系统中是否存在Intel GPU并支持QSV
-	// 跨平台检测策略：
-	// 1. Linux: 检查/dev/dri设备
-	// 2. macOS: 检查system_profiler输出
-	// 3. Windows: 通过wmic或powershell检测
-
-	hasIntelGPU := false
-
-	// 尝试Linux方式：检查/dev/dri
-	if _, err := os.Stat("/dev/dri"); err == nil {
-		hasIntelGPU = true
+	// 本分支只面向 Windows：通过 wmic 检测是否存在 Intel 显卡
+	cmd := exec.Command("wmic", "path", "win32_VideoController", "get", "name")
+	output, err := cmd.CombinedOutput()
+	if err != nil || !strings.Contains(string(output), "Intel") {
+		return false
 	}
 
-	// 如果Linux方式失败，尝试macOS方式
-	if !hasIntelGPU {
-		cmd := exec.Command("system_profiler", "SPDisplaysDataType")
-		output, err := cmd.CombinedOutput()
-		if err == nil && strings.Contains(string(output), "Intel") {
-			hasIntelGPU = true
-		}
+	// 检测到 Intel 显卡后，再检查 FFmpeg 是否支持 QSV（本分支使用 QSV 编码）
+	ffmpegCmd := exec.Command("ffmpeg", "-encoders")
+	ffmpegOutput, err := ffmpegCmd.CombinedOutput()
+	if err != nil {
+		return false
 	}
-
-	// 如果前两种方式都失败，尝试Windows方式
-	if !hasIntelGPU {
-		cmd := exec.Command("wmic", "path", "win32_VideoController", "get", "name")
-		output, err := cmd.CombinedOutput()
-		if err == nil && strings.Contains(string(output), "Intel") {
-			hasIntelGPU = true
-		}
-	}
-
-	// 检测到Intel GPU后，再检查FFmpeg是否支持vaapi（本分支已改用 VAAPI 编码）
-	if hasIntelGPU {
-		ffmpegCmd := exec.Command("ffmpeg", "-encoders")
-		output, err := ffmpegCmd.CombinedOutput()
-		if err != nil {
-			return false
-		}
-		return strings.Contains(string(output), "h264_vaapi")
-	}
-
-	return false
+	return strings.Contains(string(ffmpegOutput), "h264_qsv")
 }
 
 func hasAMD() bool {
@@ -426,25 +396,27 @@ func forMkv(fp string) error {
 		args = append(args, "-c:s", "copy")
 		args = append(args, tempName)
 	} else if hasIntel() {
-		log.Println("[分支] forMkv 使用 Intel VAAPI 硬件编码")
+		log.Println("[分支] forMkv 使用 Intel QSV 硬件编码")
 		time.Sleep(3 * time.Second)
-		// Intel VAAPI 硬件加速编码 - MKV 格式
-		// 容器化部署经实测：QSV 在容器内不易穿透，改用 VAAPI + render node 稳定可用
-		// 需将 /dev/dri/renderD128 透传进容器，并把用户加入 video/render 组
-		// 以下三项均为输入选项，必须排在 -i 之前
-		args = append(args, "-hwaccel", "vaapi")
-		args = append(args, "-hwaccel_device", "/dev/dri/renderD128")
-		args = append(args, "-hwaccel_output_format", "vaapi")
+		// Intel QSV 硬件加速编码 - MKV 格式
+		// 本分支运行于 Windows，QSV 会自动选用默认显卡适配器，无需指定 device 路径
+		// 以下两项均为输入选项，必须排在 -i 之前
+		args = append(args, "-hwaccel", "qsv")
+		args = append(args, "-hwaccel_output_format", "qsv")
 		args = append(args, "-i", fp)
-		// 视频流：H.264 VAAPI 编码
-		args = append(args, "-c:v", "h264_vaapi")
+		// 视频流：H.264 QSV 编码
+		args = append(args, "-c:v", "h264_qsv")
 		// 画质：沿用代码原有的恒定质量档 global_quality 18
-		// 只给 -global_quality（不加 -rc_mode/-q:v）时 ffmpeg 自动优先 ICQ、不支持则优雅回退 CQP；
-		// 显式 -rc_mode ICQ 会在驱动不支持时直接报错，-q:v 会强制 CQP，两者都不要用
-		// QSV 专属选项（look_ahead/look_ahead_depth/extbrc/mbbrc/rdo/adaptive_i/adaptive_b）在 h264_vaapi 下不存在，移除以免命令失败
-		args = append(args, "-global_quality", "18") // 质量档 (1-51，越小越好)，与代码原值一致
-		args = append(args, "-bf", "4")              // B 帧数量，60fps 下提升压缩效率
-		args = append(args, "-profile:v", "high")    // H.264 High Profile
+		// 只给 -global_quality 时 QSV 默认走 ICQ；再开启 look_ahead 升级为 LA_ICQ，画质更好
+		args = append(args, "-preset", "veryslow")     // QSV 质量优先档，压缩效率最高
+		args = append(args, "-global_quality", "18")   // 质量档 (1-51，越小越好)，与代码原值一致
+		args = append(args, "-look_ahead", "1")        // 前瞻码率控制（LA_ICQ），改善复杂场景的比特分配
+		args = append(args, "-look_ahead_depth", "32") // 前瞻帧数
+		args = append(args, "-extbrc", "1")            // 扩展码率控制，进一步平滑质量
+		args = append(args, "-adaptive_i", "1")        // 自适应插入 I 帧
+		args = append(args, "-adaptive_b", "1")        // 自适应插入 B 帧
+		args = append(args, "-bf", "4")                // B 帧数量，60fps 下提升压缩效率
+		args = append(args, "-profile:v", "high")      // H.264 High Profile
 		// 音频流：转码为 FLAC（无损）
 		args = append(args, "-c:a", "flac")
 		// 字幕流：完全复制
