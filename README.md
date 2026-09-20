@@ -246,6 +246,7 @@ name: segment2
 - **功能**：快速转换视频为优化的MP4格式
 - **参数**：`--root` 指定要处理的根目录
 - **特点**：使用高效的编码参数，快速完成格式转换
+- **输入处理**：只区分两种情况 —— MP4 与非 MP4。MP4 文件原地重编码后替换；非 MP4 文件（含 MKV，不做特殊处理）一律转成同名 MP4，原文件删除
 
 ## 输出说明
 
@@ -265,7 +266,7 @@ name: segment2
 ### NVIDIA GPU 设备
 
 - 视频编码：h264_nvenc
-- 音频编码：aac（MP4）/ flac（MKV）
+- 音频编码：aac
 - 预设：p7（最高质量）+ tune hq
 - 码率控制：VBR，`-b:v 0` 不设上限，CQ=19
 - 自适应量化：`-spatial-aq 1 -temporal-aq 1 -aq-strength 11`
@@ -275,7 +276,7 @@ name: segment2
 ### Intel GPU 设备（VA-API/QSV）
 
 - 视频编码：h264_qsv
-- 音频编码：aac（MP4）/ flac（MKV）
+- 音频编码：aac
 - 质量参数：`-global_quality 18`（LA_ICQ 模式，范围 1-51，越小质量越高）
   - ⚠️ **不能用 `-q`**：`-q` 是 `-qscale` 的别名，会置位 qscale flag，使 QSV 落入 **CQP 恒定量化**模式 —— 全帧使用固定 QP、完全不做内容自适应，正是平坦区最容易出块的模式；而且会让 `-look_ahead` 彻底失效
   - 官方文档的判定顺序：指定 global_quality 时，若同时置位 qscale flag → CQP；否则若开启 look_ahead → LA_ICQ；否则 → ICQ
@@ -292,7 +293,7 @@ name: segment2
 ### AMD GPU 设备（AMF）
 
 - 视频编码：h264_amf
-- 音频编码：aac（MP4）/ flac（MKV）
+- 音频编码：aac
 - 使用场景：`-usage high_quality`（影视制作级；注意 `transcoding` 是面向低码率网络传输的预设，会关闭部分 AQ 与 deblock 优化）
 - 质量偏好：`-quality quality`
 - 量化参数：qp_i=18 / qp_p=20 / qp_b=22（CQP 模式）
@@ -302,7 +303,7 @@ name: segment2
 ### CPU 软件编码（兜底）
 
 - 视频编码：libx264
-- 音频编码：aac（MP4）/ flac（MKV）
+- 音频编码：aac
 - 预设：slow，CRF=19
 - Profile：high，像素格式 yuv420p
 - `-x264-params aq-strength=1.2`：加强平坦区域自适应量化（x264 默认 1.0）
@@ -528,7 +529,7 @@ x264 分支**不再硬写 `-level`**，原因是 Level 4.1 无法容纳 1080p60�
 
 #### 9.5 最终结果
 
-`AnyVideoToMP4` 与 `forMkv` 两处 Intel 分支统一改为：
+`AnyVideoToMP4` 的 Intel 分支统一改为（当时的 `forMkv` 分支同步修改；该函数现已移除，所有非 MP4 输入含 MKV 一律经 `AnyVideoToMP4` 转成 MP4）：
 
 ```text
 # 输入选项（必须排在 -i 之前）
