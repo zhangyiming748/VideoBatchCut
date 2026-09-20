@@ -55,7 +55,7 @@ func CutOne(fp string, timestamps []string) (err error) {
 		mp4 = strings.Join([]string{folder, mp4}, string(os.PathSeparator))
 		cmd := exec.Command("ffmpeg")
 		//cmd.Args = append(cmd.Args, "-loglevel", "error")
-		if HasH264NVENC() {
+		if util.HasNvidia() {
 			cmd.Args = append(cmd.Args, "-hwaccel", "cuda")
 			cmd.Args = append(cmd.Args, "-i", fname)
 			cmd.Args = append(cmd.Args, "-ss", timestamps[i])

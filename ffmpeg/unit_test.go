@@ -13,7 +13,7 @@ func init() {
 }
 
 func TestHasCUDA(t *testing.T) {
-	HasH264NVENC()
+	util.HasNvidia()
 }
 func TestNumThreads(t *testing.T) {
 	result := runtime.NumCPU()

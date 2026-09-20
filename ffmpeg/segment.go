@@ -8,37 +8,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
-	"strings"
 	"time"
 )
 
-// HasH264NVENC 检测是否支持 NVIDIA H264 NVENC 硬件编码
-func HasH264NVENC() bool {
-	log.Printf("[DEBUG] runtime.GOOS=%s\n", runtime.GOOS)
-	// macOS 不再支持 NVIDIA CUDA 和 NVENC，直接返回 false
-	if runtime.GOOS == "darwin" {
-		log.Println("[DEBUG] macOS detected, returning false for NVENC")
-		return false
-	}
-
-	log.Println("[DEBUG] Checking nvidia-smi...")
-	// 对于其他操作系统，检查是否有 nvidia-smi 命令
-	cmd := exec.Command("nvidia-smi")
-	output, err := cmd.CombinedOutput()
-	log.Printf("[DEBUG] nvidia-smi err=%v, output=%s\n", err, string(output))
-	if err != nil {
-		return false
-	}
-
-	// 检查输出是否包含预期的 NVIDIA 信息
-	outputStr := strings.ToLower(string(output))
-	if strings.Contains(outputStr, "nvidia") && !strings.Contains(outputStr, "not found") {
-		return true
-	}
-
-	return false
-}
+// opusStereoDownmix 将任意声道数的音频（单声道/立体声/5.1/多声道）统一下混为左右两声道立体声，供 libopus 编码使用。
+// 必须用 aformat 做“真下混”：实测 pan=stereo|c0=FL|c1=FR 只是按名挑通道，
+// 对单声道（通道名 FC）和 5.1（对白在中置 FC）会输出完全静音，切勿改回。
+const opusStereoDownmix = "aformat=channel_layouts=stereo"
 
 // CutBySegments 根据给定的片段列表切割视频文件
 // mp4: 输入视频文件路径
@@ -67,7 +43,7 @@ func CutBySegments(mp4 string, segments []util.Segment) error {
 func CutBySegment(index, total, mp4, start, end string) error {
 	out := filepath.Join(filepath.Dir(mp4), index+".mp4")
 	cmd := exec.Command("ffmpeg")
-	if HasH264NVENC() {
+	if util.HasNvidia() {
 		cmd.Args = append(cmd.Args, "-hwaccel", "cuda")
 	} else {
 		//
@@ -80,7 +56,7 @@ func CutBySegment(index, total, mp4, start, end string) error {
 	if end != "00:00:00.000" {
 		cmd.Args = append(cmd.Args, "-to", end)
 	}
-	if HasH264NVENC() {
+	if util.HasNvidia() {
 		log.Println("[分支] CutBySegment 使用 NVIDIA NVENC 硬件编码")
 		time.Sleep(3 * time.Second)
 		cmd.Args = append(cmd.Args, "-c:v", "h264_nvenc")
@@ -104,12 +80,18 @@ func CutBySegment(index, total, mp4, start, end string) error {
 		// libx265 高质量模式：最佳压缩率
 		cmd.Args = append(cmd.Args, "-c:v", "libx265")
 		cmd.Args = append(cmd.Args, "-tag:v", "hvc1")
-		cmd.Args = append(cmd.Args, "-preset", "medium")
-		cmd.Args = append(cmd.Args, "-crf", "22")
-		cmd.Args = append(cmd.Args, "-profile:v", "main10")
+		cmd.Args = append(cmd.Args, "-preset", "slow")
+		cmd.Args = append(cmd.Args, "-crf", "24") // H.265的CRF 24在画质和大小之间取得良好平衡
+		// 根据源视频位深自动选择像素格式，避免不必要的10-bit转换
+		cmd.Args = append(cmd.Args, "-pix_fmt", "yuv420p")
+		// 优化的心理视觉参数
+		cmd.Args = append(cmd.Args, "-x265-params", "aq-mode=3:aq-strength=1.2:psy-rd=2.0:psy-rdoq=2.0:rdoq-level=1")
 	}
 
-	cmd.Args = append(cmd.Args, "-c:a", "aac")
+	// 音频编码：所有分支统一使用 libopus
+	cmd.Args = append(cmd.Args, "-c:a", "libopus")
+	cmd.Args = append(cmd.Args, "-b:a", "160k")
+	cmd.Args = append(cmd.Args, "-application", "audio")
 	cmd.Args = append(cmd.Args, "-map_metadata", "-1")
 	// vsync 0: 禁用视频同步，保持原始帧时戳
 	cmd.Args = append(cmd.Args, "-vsync", "0")
@@ -117,8 +99,8 @@ func CutBySegment(index, total, mp4, start, end string) error {
 	cmd.Args = append(cmd.Args, "-avoid_negative_ts", "make_zero")
 	// 重新生成 PTS（presentation timestamp），忽略乱序 DTS，解决时间戳问题
 	cmd.Args = append(cmd.Args, "-fflags", "+genpts+igndts")
-	// 强制音视频同步，消除开头多余音频或结尾缺失音频
-	cmd.Args = append(cmd.Args, "-af", "adelay=0|0, aresample=async=1")
+	// 强制音视频同步，消除开头多余音频或结尾缺失音频；末尾下混为立体声（与 libopus 合并为单条 -af，避免相互覆盖）
+	cmd.Args = append(cmd.Args, "-af", "adelay=0|0, aresample=async=1, "+opusStereoDownmix)
 	// copyts: 复制输入的时间戳到输出，保持时间戳连续性
 	cmd.Args = append(cmd.Args, "-copyts")
 	cmd.Args = append(cmd.Args, out)
