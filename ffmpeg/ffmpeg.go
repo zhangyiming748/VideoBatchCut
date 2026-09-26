@@ -94,7 +94,9 @@ func CutOne(fp string, timestamps []string) (err error) {
 	mp4 := strings.Join([]string{last, "mp4"}, ".")
 	mp4 = strings.Join([]string{folder, mp4}, string(os.PathSeparator))
 	var cmd *exec.Cmd
-	if hostname, _ := os.Hostname(); hostname == "DESKTOP-VGFTVD8" {
+	// 复用 util.HasNvidia()：它用真实编码探测判断 h264_nvenc 是否可用，且结果带缓存，
+	// 与前面循环分支保持一致，避免再靠硬编码主机名（DESKTOP-VGFTVD8）判断本机。
+	if util.HasNvidia() {
 		cmd = exec.Command("ffmpeg", "-hwaccel", "cuda", "-i", fname, "-ss", timestamps[length-1], "-c:v", "h264_nvenc", "-c:a", "aac", "-ac", "1", "-preset", "medium", "-cq", "20", "-progress", "pipe:1", mp4)
 	} else {
 		cmd = exec.Command("ffmpeg", "-i", fname, "-ss", timestamps[length-1], "-c:v", "libx265", "-c:a", "aac", "-tag:v", "hvc1", "-ac", "1", "-progress", "pipe:1", mp4)
