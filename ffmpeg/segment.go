@@ -5,16 +5,8 @@ import (
 	"VideoBatchCut/util"
 	"fmt"
 	"log"
-	"os"
-	"os/exec"
 	"path/filepath"
-	"time"
 )
-
-// opusStereoDownmix 将任意声道数的音频（单声道/立体声/5.1/多声道）统一下混为左右两声道立体声，供 libopus 编码使用。
-// 必须用 aformat 做“真下混”：实测 pan=stereo|c0=FL|c1=FR 只是按名挑通道，
-// 对单声道（通道名 FC）和 5.1（对白在中置 FC）会输出完全静音，切勿改回。
-const opusStereoDownmix = "aformat=channel_layouts=stereo"
 
 // CutBySegments 根据给定的片段列表切割视频文件
 // mp4: 输入视频文件路径
@@ -42,84 +34,18 @@ func CutBySegments(mp4 string, segments []util.Segment) error {
 // end: 结束时间点
 func CutBySegment(index, total, mp4, start, end string) error {
 	out := filepath.Join(filepath.Dir(mp4), index+".mp4")
-	cmd := exec.Command("ffmpeg")
-	if util.HasNvidia() {
-		cmd.Args = append(cmd.Args, "-hwaccel", "cuda")
-	} else {
-		//
+	// "00:00:00.000" 表示该端不限制；Job 只按是否为空决定加不加 -ss/-to，故转成空串。
+	if start == "00:00:00.000" {
+		start = ""
 	}
-	cmd.Args = append(cmd.Args, "-i", mp4)
-	// cmd.Args = append(cmd.Args, "-threads", "1")
-	if start != "00:00:00.000" {
-		cmd.Args = append(cmd.Args, "-ss", start)
+	if end == "00:00:00.000" {
+		end = ""
 	}
-	if end != "00:00:00.000" {
-		cmd.Args = append(cmd.Args, "-to", end)
-	}
-	if util.HasNvidia() {
-		log.Println("[分支] CutBySegment 使用 NVIDIA NVENC 硬件编码")
-		time.Sleep(3 * time.Second)
-		cmd.Args = append(cmd.Args, "-c:v", "h264_nvenc")
-		cmd.Args = append(cmd.Args, "-preset", "slow")
-		cmd.Args = append(cmd.Args, "-cq", "18")
-		// NVENC 额外参数：优化质量和兼容性
-		cmd.Args = append(cmd.Args, "-profile:v", "high")
-		cmd.Args = append(cmd.Args, "-level", "5.1")
-	} else if util.HasAppleSilicon() {
-		log.Println("[分支] CutBySegment 使用 Apple VideoToolbox 硬件 H.264 编码")
-		time.Sleep(3 * time.Second)
-		// Apple Silicon：VideoToolbox 硬件 H.264，画质对标高质量 libx265（与 CutOne 的苹果分支保持一致）：
-		//   -spatial_aq 1：空间自适应量化，把码率倾斜给大面积纯色/平坦区，避免“纯色块出方块”；
-		//   -q:v 95：VideoToolbox 恒定质量档（1-100），H.264 效率低于 H.265 故取高档；
-		//   -profile:v high + -coder cabac：High Profile + CABAC，压缩效率优于默认 CAVLC，平坦区更干净；
-		//   -allow_sw 1：硬件编码器被占用时回退软件 VideoToolbox，避免整批失败。
-		cmd.Args = append(cmd.Args, "-c:v", "h264_videotoolbox")
-		cmd.Args = append(cmd.Args, "-profile:v", "high")
-		cmd.Args = append(cmd.Args, "-coder", "cabac")
-		cmd.Args = append(cmd.Args, "-q:v", "95")
-		cmd.Args = append(cmd.Args, "-spatial_aq", "1")
-		cmd.Args = append(cmd.Args, "-allow_sw", "1")
-	} else if fast := os.Getenv("FASTCUT"); fast == "yes" {
-		log.Println("[分支] CutBySegment 使用 CPU libx264 快速模式")
-		time.Sleep(3 * time.Second)
-		// libx264 快速模式：平衡速度和质量
-		cmd.Args = append(cmd.Args, "-c:v", "libx264")
-		cmd.Args = append(cmd.Args, "-preset", "fast")
-		cmd.Args = append(cmd.Args, "-crf", "20")
-		cmd.Args = append(cmd.Args, "-profile:v", "high")
-		cmd.Args = append(cmd.Args, "-level", "4.1")
-	} else {
-		log.Println("[分支] CutBySegment 使用 CPU libx265 高质量模式")
-		time.Sleep(3 * time.Second)
-		// libx265 高质量模式：最佳压缩率
-		cmd.Args = append(cmd.Args, "-c:v", "libx265")
-		cmd.Args = append(cmd.Args, "-tag:v", "hvc1")
-		cmd.Args = append(cmd.Args, "-preset", "slow")
-		cmd.Args = append(cmd.Args, "-crf", "24") // H.265的CRF 24在画质和大小之间取得良好平衡
-		// 根据源视频位深自动选择像素格式，避免不必要的10-bit转换
-		cmd.Args = append(cmd.Args, "-pix_fmt", "yuv420p")
-		// 优化的心理视觉参数
-		cmd.Args = append(cmd.Args, "-x265-params", "aq-mode=3:aq-strength=1.2:psy-rd=2.0:psy-rdoq=2.0:rdoq-level=1")
-	}
-
-	// 音频编码：所有分支统一使用 libopus
-	cmd.Args = append(cmd.Args, "-c:a", "libopus")
-	cmd.Args = append(cmd.Args, "-b:a", "160k")
-	cmd.Args = append(cmd.Args, "-application", "audio")
-	cmd.Args = append(cmd.Args, "-map_metadata", "-1")
-	// -fps_mode passthrough: 禁用视频同步，保持原始帧时戳（等价旧 -vsync 0；ffmpeg 8+ 已移除 -vsync）
-	cmd.Args = append(cmd.Args, "-fps_mode", "passthrough")
-	// 强制把负时间戳校正为 0，消除开头黑帧/不同步
-	cmd.Args = append(cmd.Args, "-avoid_negative_ts", "make_zero")
-	// 重新生成 PTS（presentation timestamp），忽略乱序 DTS，解决时间戳问题
-	cmd.Args = append(cmd.Args, "-fflags", "+genpts+igndts")
-	// 强制音视频同步，消除开头多余音频或结尾缺失音频；末尾下混为立体声（与 libopus 合并为单条 -af，避免相互覆盖）
-	cmd.Args = append(cmd.Args, "-af", "adelay=0|0, aresample=async=1, "+opusStereoDownmix)
-	// copyts: 复制输入的时间戳到输出，保持时间戳连续性
-	cmd.Args = append(cmd.Args, "-copyts")
-	cmd.Args = append(cmd.Args, out)
-	err := util.Exec(cmd)
-	if err != nil {
+	// 精确切割：自动硬件编码 + 高质量 Opus 音频 + 时间戳/同步修复，参数由 util/ffmpeg.go 统一决定。
+	job := util.NewCutJob(mp4, out, start, end)
+	// 在 A/V 重同步基础上追加“真下混为立体声”，供 libopus 立体声编码（勿用 pan，见 util.AudioFilterStereoDownmix 注释）。
+	job.AudioFilter = util.AudioFilterSync + ", " + util.AudioFilterStereoDownmix
+	if err := job.Run(); err != nil {
 		return err
 	}
 	log.Printf("此次文件:%s分割成功并写入sqlite数据库成功\n", mp4)

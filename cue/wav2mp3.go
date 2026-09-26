@@ -3,9 +3,10 @@ package cue
 import (
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"VideoBatchCut/util"
 )
 
 // 获取指定目录下的所有wav文件
@@ -32,14 +33,11 @@ func convertToMp3(wavFile string) error {
 	mp3File := strings.TrimSuffix(wavFile, ".wav") + ".mp3"
 	log.Printf("开始转换文件: %s -> %s", wavFile, mp3File)
 
-	cmd := exec.Command("ffmpeg",
-		"-i", wavFile,
-		"-c:a", "libmp3lame",
-		"-b:a", "320k",
-		"-ar", "44100",
-		"-ac", "2",
-		mp3File,
-	)
+	// 音频-only 任务：不加视频编码参数（EncoderNone）；本函数目的即 wav→mp3，故沿用 MP3 输出（非项目默认的视频 Opus）。
+	job := util.NewJob(wavFile, mp3File)
+	job.Encoder = util.EncoderNone
+	job.Audio = util.Audio{Codec: "libmp3lame", Bitrate: "320k", SampleRate: 44100, Channels: 2}
+	cmd := job.Command()
 
 	log.Printf("执行命令: %s", cmd.String())
 	if err := cmd.Run(); err != nil {
