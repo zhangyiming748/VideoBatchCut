@@ -65,6 +65,20 @@ func CutBySegment(index, total, mp4, start, end string) error {
 		// NVENC 额外参数：优化质量和兼容性
 		cmd.Args = append(cmd.Args, "-profile:v", "high")
 		cmd.Args = append(cmd.Args, "-level", "5.1")
+	} else if util.HasAppleSilicon() {
+		log.Println("[分支] CutBySegment 使用 Apple VideoToolbox 硬件 H.264 编码")
+		time.Sleep(3 * time.Second)
+		// Apple Silicon：VideoToolbox 硬件 H.264，画质对标高质量 libx265（与 CutOne 的苹果分支保持一致）：
+		//   -spatial_aq 1：空间自适应量化，把码率倾斜给大面积纯色/平坦区，避免“纯色块出方块”；
+		//   -q:v 95：VideoToolbox 恒定质量档（1-100），H.264 效率低于 H.265 故取高档；
+		//   -profile:v high + -coder cabac：High Profile + CABAC，压缩效率优于默认 CAVLC，平坦区更干净；
+		//   -allow_sw 1：硬件编码器被占用时回退软件 VideoToolbox，避免整批失败。
+		cmd.Args = append(cmd.Args, "-c:v", "h264_videotoolbox")
+		cmd.Args = append(cmd.Args, "-profile:v", "high")
+		cmd.Args = append(cmd.Args, "-coder", "cabac")
+		cmd.Args = append(cmd.Args, "-q:v", "95")
+		cmd.Args = append(cmd.Args, "-spatial_aq", "1")
+		cmd.Args = append(cmd.Args, "-allow_sw", "1")
 	} else if fast := os.Getenv("FASTCUT"); fast == "yes" {
 		log.Println("[分支] CutBySegment 使用 CPU libx264 快速模式")
 		time.Sleep(3 * time.Second)
@@ -93,8 +107,8 @@ func CutBySegment(index, total, mp4, start, end string) error {
 	cmd.Args = append(cmd.Args, "-b:a", "160k")
 	cmd.Args = append(cmd.Args, "-application", "audio")
 	cmd.Args = append(cmd.Args, "-map_metadata", "-1")
-	// vsync 0: 禁用视频同步，保持原始帧时戳
-	cmd.Args = append(cmd.Args, "-vsync", "0")
+	// -fps_mode passthrough: 禁用视频同步，保持原始帧时戳（等价旧 -vsync 0；ffmpeg 8+ 已移除 -vsync）
+	cmd.Args = append(cmd.Args, "-fps_mode", "passthrough")
 	// 强制把负时间戳校正为 0，消除开头黑帧/不同步
 	cmd.Args = append(cmd.Args, "-avoid_negative_ts", "make_zero")
 	// 重新生成 PTS（presentation timestamp），忽略乱序 DTS，解决时间戳问题

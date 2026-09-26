@@ -65,8 +65,33 @@ func CutOne(fp string, timestamps []string) (err error) {
 			cmd.Args = append(cmd.Args, "-preset", "slow")
 			cmd.Args = append(cmd.Args, "-cq", "18")
 			cmd.Args = append(cmd.Args, "-map_metadata", "-1")
-			cmd.Args = append(cmd.Args, "-vsync", "0") // 添加这行
-			cmd.Args = append(cmd.Args, "-copyts")     // 添加这行
+			// -fps_mode passthrough 等价于旧的 -vsync 0；ffmpeg 8+ 已移除 -vsync（本机 9.0.1）
+			cmd.Args = append(cmd.Args, "-fps_mode", "passthrough")
+			cmd.Args = append(cmd.Args, "-copyts") // 添加这行
+			cmd.Args = append(cmd.Args, mp4)
+		} else if util.HasAppleSilicon() {
+			// Apple Silicon：用 VideoToolbox 硬件 H.264 编码，画质对标高质量 libx265。
+			// 关键点：
+			//   -spatial_aq 1：开启空间自适应量化，把码率向大面积纯色/平坦区倾斜，专治“纯色块出方块”；
+			//   -q:v 95：VideoToolbox 恒定质量档（1-100）。H.264 压缩效率低于 H.265，故取更高档；
+			//            实测同一片源 90→637KB、95→1.4MB、100→3.1MB，95 足以对标高质量 libx265 又不至于像 100 那样翻倍；
+			//   -profile:v high + -coder cabac：High Profile + CABAC 熵编码，压缩效率优于默认 CAVLC，同等画质更省码率、平坦区更干净；
+			//   -allow_sw 1：硬件编码器被占用时回退软件 VideoToolbox，避免整批失败。
+			cmd.Args = append(cmd.Args, "-i", fname)
+			cmd.Args = append(cmd.Args, "-ss", timestamps[i])
+			cmd.Args = append(cmd.Args, "-to", timestamps[i+1])
+			cmd.Args = append(cmd.Args, "-c:v", "h264_videotoolbox")
+			cmd.Args = append(cmd.Args, "-profile:v", "high")
+			cmd.Args = append(cmd.Args, "-coder", "cabac")
+			cmd.Args = append(cmd.Args, "-q:v", "95")
+			cmd.Args = append(cmd.Args, "-spatial_aq", "1")
+			cmd.Args = append(cmd.Args, "-allow_sw", "1")
+			cmd.Args = append(cmd.Args, "-c:a", "aac")
+			cmd.Args = append(cmd.Args, "-map_metadata", "-1")
+			// -fps_mode passthrough 等价于旧的 -vsync 0（保持原始帧时戳）；
+			// ffmpeg 8+ 已移除 -vsync（本机为 9.0.1），用新名以免“Unrecognized option 'vsync'”。
+			cmd.Args = append(cmd.Args, "-fps_mode", "passthrough")
+			cmd.Args = append(cmd.Args, "-copyts") // 添加这行
 			cmd.Args = append(cmd.Args, mp4)
 		} else {
 			cmd.Args = append(cmd.Args, "-i", fname)
@@ -76,8 +101,9 @@ func CutOne(fp string, timestamps []string) (err error) {
 			cmd.Args = append(cmd.Args, "-tag:v", "hvc1")
 			cmd.Args = append(cmd.Args, "-c:a", "aac")
 			cmd.Args = append(cmd.Args, "-map_metadata", "-1")
-			cmd.Args = append(cmd.Args, "-vsync", "0") // 添加这行
-			cmd.Args = append(cmd.Args, "-copyts")     // 添加这行
+			// -fps_mode passthrough 等价于旧的 -vsync 0；ffmpeg 8+ 已移除 -vsync（本机 9.0.1）
+			cmd.Args = append(cmd.Args, "-fps_mode", "passthrough")
+			cmd.Args = append(cmd.Args, "-copyts") // 添加这行
 			cmd.Args = append(cmd.Args, mp4)
 		}
 		err = util.Exec(cmd)
@@ -98,6 +124,9 @@ func CutOne(fp string, timestamps []string) (err error) {
 	// 与前面循环分支保持一致，避免再靠硬编码主机名（DESKTOP-VGFTVD8）判断本机。
 	if util.HasNvidia() {
 		cmd = exec.Command("ffmpeg", "-hwaccel", "cuda", "-i", fname, "-ss", timestamps[length-1], "-c:v", "h264_nvenc", "-c:a", "aac", "-ac", "1", "-preset", "medium", "-cq", "20", "-progress", "pipe:1", mp4)
+	} else if util.HasAppleSilicon() {
+		// Apple Silicon：VideoToolbox 硬件 H.264，参数与循环分支保持一致（高画质档 + CABAC + 空间自适应量化，避免纯色块）
+		cmd = exec.Command("ffmpeg", "-i", fname, "-ss", timestamps[length-1], "-c:v", "h264_videotoolbox", "-profile:v", "high", "-coder", "cabac", "-q:v", "95", "-spatial_aq", "1", "-allow_sw", "1", "-c:a", "aac", "-ac", "1", "-progress", "pipe:1", mp4)
 	} else {
 		cmd = exec.Command("ffmpeg", "-i", fname, "-ss", timestamps[length-1], "-c:v", "libx265", "-c:a", "aac", "-tag:v", "hvc1", "-ac", "1", "-progress", "pipe:1", mp4)
 	}
