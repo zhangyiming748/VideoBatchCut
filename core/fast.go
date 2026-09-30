@@ -2,10 +2,11 @@ package core
 
 import (
 	"VideoBatchCut/ffmpeg"
-	"github.com/zhangyiming748/FastMediaInfo"
-	"github.com/zhangyiming748/finder"
 	"log"
 	"path/filepath"
+
+	"github.com/zhangyiming748/FastMediaInfo"
+	"github.com/zhangyiming748/finder"
 )
 
 func FastMP4(root string) {
@@ -23,6 +24,8 @@ func FastMP4(root string) {
 				}
 			}
 			if err := ffmpeg.AnyVideoToMP4(video); err != nil {
+				// 失败（含字幕不兼容被跳过）只打印错误，不退出，继续处理下一个
+				log.Printf("转换文件%s失败，跳过:%v\n", video, err)
 				continue
 			}
 		}

@@ -33,6 +33,11 @@ func AnyVideoToMP4(fp string) error {
 	// 	log.Printf("文件%s已存在，请勿重复处理\n", finalName)
 	// 	return nil
 	// }
+	// 字幕预检：含 MP4 装不下的字幕（如 MKV 的 PGS）时直接跳过，
+	// 不启动 ffmpeg、不动原文件，只返回错误由批量调用方打印后继续下一个。
+	if util.HasIncompatibleSubtitles(fp, tempName) {
+		return fmt.Errorf("跳过文件%s：含 MP4 容器无法封装的字幕流（如 PGS），未做任何转换", fp)
+	}
 	// 编码器及视频参数由 util/ffmpeg.go 结合 hwaccel.go 的硬件探测自动决定（NVIDIA / Intel / AMD / Apple / CPU），
 	// 音频统一为高质量 Opus，无需再在此处逐硬件手写参数。
 	job := util.NewJob(fp, tempName)

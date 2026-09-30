@@ -23,13 +23,23 @@
 // 对应的 probe*（probeNvenc / probeQsv / probeAmf / probeVideoToolbox）保持一致——
 // 探测用的就是这套参数，只有两者一致，“探测通过” 才等价于 “真实编码能跑通”。
 // 改动其中一处，另一处必须同步。
+//
+// 流保留保证：默认（MapAllStreams）把输入的所有视频/音频/字幕/数据流全部映射到输出，
+// 并按输出容器自动指定字幕编码（MP4→mov_text、MKV→srt）。含 PGS / DVD 等图形字幕的
+// 文件无法封装进 MP4，转换前必须先经 HasIncompatibleSubtitles 预检并跳过该文件
+// （只打印错误、不中断批处理），避免转换中途失败或悄悄丢字幕。
 package util
 
 import (
+	"bytes"
+	"encoding/csv"
+	"fmt"
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
+	"strings"
 )
 
 // Encoder 表示一次任务最终选用的视频编码器。
@@ -236,6 +246,124 @@ func AudioOpus() Audio {
 func AudioCopy() Audio { return Audio{Codec: "copy"} }
 func AudioNone() Audio { return Audio{Codec: "none"} }
 
+// mp4SubtitleCodecs 是 MP4/M4V 容器可封装的字幕编码白名单。
+// PGS（hdmv_pgs_subtitle）、DVD（dvd_subtitle）等图形字幕无法封装进 MP4；
+// VobSub 实为 dvd_subtitle、蓝光文本字幕实为 hdmv_text_subtitle，均已覆盖。
+var mp4SubtitleCodecs = map[string]bool{
+	"mov_text": true,
+	"subrip":   true,
+	"srt":      true,
+	"ass":      true,
+	"ssa":      true,
+	"webvtt":   true,
+	"text":     true,
+	"ttml":     true,
+}
+
+// subtitleCodecForOutput 按输出容器返回应指定的字幕编码（-c:s）；
+// 其它容器返回 nil，交给 ffmpeg 按容器默认选择。
+func subtitleCodecForOutput(output string) []string {
+	switch strings.ToLower(filepath.Ext(output)) {
+	case ".mp4", ".m4v":
+		return []string{"-c:s", "mov_text"}
+	case ".mkv":
+		return []string{"-c:s", "srt"}
+	default:
+		return nil
+	}
+}
+
+// probeStreams 用 ffprobe 列出输入文件的所有流，每行返回 "类型,编码名"（如 "subtitle,hdmv_pgs_subtitle"）。
+func probeStreams(input string) ([][]string, error) {
+	cmd := exec.Command("ffprobe", "-v", "error",
+		"-show_entries", "stream=codec_type,codec_name",
+		"-of", "csv=p=0", input)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("ffprobe 探测 %s 失败: %w (%s)", input, err, strings.TrimSpace(stderr.String()))
+	}
+	return csv.NewReader(bytes.NewReader(bytes.TrimSpace(stdout.Bytes()))).ReadAll()
+}
+
+// IncompatibleSubtitles 返回输入文件中无法封装进目标容器（按输出扩展名判定）的字幕编码列表。
+// ffprobe 探测失败时返回错误，由调用方决定跳过还是放行，避免在信息不全的情况下误转。
+func IncompatibleSubtitles(input, output string) ([]string, error) {
+	if !strings.EqualFold(filepath.Ext(output), ".mp4") && !strings.EqualFold(filepath.Ext(output), ".m4v") {
+		return nil, nil // 目前只有 MP4 系容器存在装不进的字幕，其它容器一律放行
+	}
+	streams, err := probeStreams(input)
+	if err != nil {
+		return nil, err
+	}
+	var bad []string
+	for _, s := range streams {
+		if len(s) >= 2 && s[0] == "subtitle" && !mp4SubtitleCodecs[s[1]] {
+			bad = append(bad, s[1])
+		}
+	}
+	return bad, nil
+}
+
+// HasIncompatibleSubtitles 供批量转换入口做前置预检：文件含目标容器装不下的字幕（如 PGS→MP4）时返回 true。
+// 预检自身失败（如 ffprobe 缺失）按保守策略同样返回 true 并打印错误，宁可跳过也不误转。
+func HasIncompatibleSubtitles(input, output string) bool {
+	bad, err := IncompatibleSubtitles(input, output)
+	if err != nil {
+		log.Printf("[ffmpeg] 字幕预检失败，跳过 %s: %v", input, err)
+		return true
+	}
+	if len(bad) > 0 {
+		log.Printf("[ffmpeg] %s 含 %s 容器无法封装的字幕流 %v，跳过该文件（保留原文件）",
+			input, filepath.Ext(output), bad)
+		return true
+	}
+	return false
+}
+
+// audioStreamCount 返回输入文件的音频流数量；探测失败返回 0（按单音频流保守处理）。
+func audioStreamCount(input string) int {
+	streams, err := probeStreams(input)
+	if err != nil {
+		log.Printf("[ffmpeg] 探测音频流数量失败（%v），按单音频流处理", err)
+		return 0
+	}
+	n := 0
+	for _, s := range streams {
+		if len(s) >= 1 && s[0] == "audio" {
+			n++
+		}
+	}
+	return n
+}
+
+// allStreamMaps 返回“保留全部流”的映射参数：视频/音频/字幕/数据流逐类映射，
+// "?" 保证输入没有该类流时不报错；附件流（字体等）仅 MKV 目标容器支持。
+func allStreamMaps(output string) []string {
+	maps := []string{"-map", "0:v?", "-map", "0:a?", "-map", "0:s?", "-map", "0:d?"}
+	if strings.EqualFold(filepath.Ext(output), ".mkv") {
+		maps = append(maps, "-map", "0:t?")
+	}
+	return maps
+}
+
+// audioFilterComplexArgs 把同一个音频滤镜应用到所有音频流，并返回 filter_complex 及对应的映射参数。
+// 背景：-af 只能作用于单条输出音频流，一旦输入有多条音轨且全部映射，ffmpeg 会直接报错
+// “Filtergraph ... was specified through the -vf/-af/-df option for output stream 0:a:N”，
+// 因此多音轨场景必须改用 filter_complex 给每条音轨分别挂滤镜。
+func audioFilterComplexArgs(input string, audioFilter string, n int) []string {
+	var parts []string
+	args := []string{"-filter_complex"}
+	var graph strings.Builder
+	for i := 0; i < n; i++ {
+		graph.WriteString(fmt.Sprintf("[0:a:%d]%s[a%d];", i, audioFilter, i))
+		parts = append(parts, "-map", fmt.Sprintf("[a%d]", i))
+	}
+	args = append(args, strings.TrimSuffix(graph.String(), ";"))
+	return append(args, parts...)
+}
+
 // args 生成音频相关参数。
 func (a Audio) args() []string {
 	switch a.Codec {
@@ -293,6 +421,13 @@ type Job struct {
 	Progress  bool // -progress pipe:1，把机器可读进度输出到 stdout
 	Overwrite bool // -y，覆盖已存在的输出文件
 
+	// MapAllStreams 为 true（NewJob 默认）时自动添加流映射，把输入的所有视频/音频/字幕/数据流
+	// 全部保留到输出（不加时退回 ffmpeg 默认的“每类挑一条”行为，字幕会被整体丢弃），
+	// 并按输出容器自动指定字幕编码（MP4→mov_text、MKV→srt）。
+	// 若 PostInputArgs 里已手写 -map，则不再自动添加映射。
+	// EncoderNone（音频-only 任务，如 wav→mp3）时本开关自动失效，避免把视频流带进纯音频输出。
+	MapAllStreams bool
+
 	// 通用扩展点，覆盖 model 未直接建模的特殊参数：
 	PreInputArgs  []string // 放在 -i 之前（输入选项，如额外的 -f / -re）
 	PostInputArgs []string // 放在 -i 之后（如第二路输入 -stream_loop -1 -i x、-map 等）
@@ -304,13 +439,14 @@ type Job struct {
 // NewJob 返回默认的全量重编码任务：自动硬件编码 + 高质量 Opus 音频 + 覆盖输出。
 func NewJob(input, output string) *Job {
 	return &Job{
-		Input:      input,
-		Output:     output,
-		Encoder:    EncoderAuto,
-		Audio:      AudioOpus(),
-		HwDecode:   true,
-		Overwrite:  true,
-		HideBanner: true,
+		Input:         input,
+		Output:        output,
+		Encoder:       EncoderAuto,
+		Audio:         AudioOpus(),
+		HwDecode:      true,
+		Overwrite:     true,
+		HideBanner:    true,
+		MapAllStreams: true,
 	}
 }
 
@@ -370,11 +506,29 @@ func (j *Job) Args() []string {
 		args = append(args, "-to", j.End)
 	}
 
+	// 流映射：保留输入的所有视频/音频/字幕/数据流（PostInputArgs 已手写 -map 时让位）。
+	// 多音轨 + 音频滤镜不能共存于 -af（见 audioFilterComplexArgs），改走 filter_complex 逐轨挂滤镜。
+	mapAll := j.MapAllStreams && enc != EncoderNone && !hasMapFlag(j.PostInputArgs)
+	useFilterComplex := false
+	nAudio := 0
+	if mapAll && j.AudioFilter != "" {
+		nAudio = audioStreamCount(j.Input)
+		useFilterComplex = nAudio > 1
+	}
+	if mapAll && !useFilterComplex {
+		args = append(args, allStreamMaps(j.Output)...)
+	}
+
 	// 视频编码参数（按硬件自动决定的单一事实来源）
 	args = append(args, videoEncoderArgs(enc)...)
 
 	// 音频编码参数
 	args = append(args, j.Audio.args()...)
+
+	// 字幕编码：按输出容器指定，保证映射过来的字幕流能真正封装进去
+	if mapAll {
+		args = append(args, subtitleCodecForOutput(j.Output)...)
+	}
 
 	// 时间戳/同步相关（顺序与既有 CutBySegment 保持一致）
 	if j.StripMetadata {
@@ -389,7 +543,14 @@ func (j *Job) Args() []string {
 	if j.GenPts {
 		args = append(args, "-fflags", "+genpts+igndts")
 	}
-	if j.AudioFilter != "" {
+	if useFilterComplex {
+		// 多音轨：每条音轨分别挂滤镜，音频映射由 filter_complex 分支给出
+		args = append(args, audioFilterComplexArgs(j.Input, j.AudioFilter, nAudio)...)
+		args = append(args, "-map", "0:v?", "-map", "0:s?", "-map", "0:d?")
+		if strings.EqualFold(filepath.Ext(j.Output), ".mkv") {
+			args = append(args, "-map", "0:t?")
+		}
+	} else if j.AudioFilter != "" {
 		args = append(args, "-af", j.AudioFilter)
 	}
 	if j.CopyTimestamps {
@@ -408,6 +569,16 @@ func (j *Job) Args() []string {
 	return append(args, j.Output)
 }
 
+// hasMapFlag 判断扩展参数里是否已手写 -map（含 -map:v 等带后缀形式），有则不再自动加流映射。
+func hasMapFlag(args []string) bool {
+	for _, a := range args {
+		if a == "-map" || strings.HasPrefix(a, "-map:") {
+			return true
+		}
+	}
+	return false
+}
+
 // Command 构建 *exec.Cmd（尚未执行）。
 func (j *Job) Command() *exec.Cmd { return exec.Command("ffmpeg", j.Args()...) }
 
@@ -421,8 +592,13 @@ func (j *Job) Run() error {
 }
 
 // Convert 是最顶层的便捷函数：只给输入和输出文件名，视频编码参数由 hwaccel.go 自动判定，
-// 音频默认高质量 Opus，覆盖输出。等价于 NewJob(input, output).Run()。
+// 音频默认高质量 Opus，全流保留，覆盖输出。
+// 转换前预检字幕兼容性：含目标容器装不下的字幕（如 MKV 的 PGS→MP4）时直接跳过——
+// 只返回错误、不动输入文件，批量调用方打印错误后继续下一个即可。
 func Convert(input, output string) error {
+	if HasIncompatibleSubtitles(input, output) {
+		return fmt.Errorf("跳过 %s：含 %s 容器无法封装的字幕流", input, filepath.Ext(output))
+	}
 	return NewJob(input, output).Run()
 }
 
