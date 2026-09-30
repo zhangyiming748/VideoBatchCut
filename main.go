@@ -81,6 +81,21 @@ func main() {
 	// 为 fast 命令添加标志
 	fastmp4Cmd.Flags().StringP("dir", "d", "./", "根目录路径 (必需)")
 
+	// 添加fix命令
+	var fixCmd = &cobra.Command{
+		Use:   "fix",
+		Short: "强制转换视频为MP4 H264",
+		Long:  "无论视频是什么扩展名或编码格式，都使用硬件加速强制转换为MP4容器的H264；无论成功失败均保留原文件，新文件在扩展名前加duplicate后缀",
+		Run: func(cmd *cobra.Command, args []string) {
+			dir, _ := cmd.Flags().GetString("dir")
+			fmt.Printf("开始执行强制转换 MP4 H264 任务...\n根目录：%s\n", dir)
+			core.Fix(dir)
+		},
+	}
+	// 为 fix 命令添加标志，并用 cobra 自带的必填校验强制要求 --dir
+	fixCmd.Flags().StringP("dir", "d", "./", "根目录路径 (必需)")
+	fixCmd.MarkFlagRequired("dir")
+
 	// 添加 archive 命令
 	var archiveCmd = &cobra.Command{
 		Use:   "archive",
@@ -110,6 +125,7 @@ func main() {
 
 	rootCmd.AddCommand(cutCmd)
 	rootCmd.AddCommand(fastmp4Cmd)
+	rootCmd.AddCommand(fixCmd)
 	rootCmd.AddCommand(archiveCmd)
 	rootCmd.AddCommand(versionCmd)
 
