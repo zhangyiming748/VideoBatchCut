@@ -4,7 +4,6 @@ package util
 import (
 	"bufio"
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -85,18 +84,19 @@ type Segment struct {
 // FormatSecondToHMS 将秒数转换为时分秒格式
 // 输入: 秒数（float64）
 // 输出: "HH:MM:SS.mmm" 格式的时间字符串
+// 毫秒用截断而非四舍五入：旧实现 math.Round 在秒的小数部分 ≥0.9995 时会进位到 1000，
+// 格式化出 13 位再被 [:12] 硬截断，切割点会整整提前 0.9 秒。
 func FormatSecondToHMS(seconds float64) string {
-	hours := int(seconds / 3600)
-	seconds -= float64(hours * 3600)
-	minutes := int(seconds / 60)
-	seconds -= float64(minutes * 60)
-	milliseconds := int(math.Round(seconds * 1000))
-	times := fmt.Sprintf("%02d:%02d:%02d.%03d", hours, minutes, int(seconds), milliseconds)
-	times = times[:12]
-	//fmt.Println(times)
-	// times = strings.Replace(times, ":", "", -1)
-	// times = strings.Replace(times, ".", "", -1)
-	return times
+	if seconds < 0 {
+		seconds = 0
+	}
+	// 先整体截断到毫秒，再拆分时分秒，从根上消灭“毫秒进位到 1000”的可能
+	totalMs := int64(seconds * 1000)
+	hours := totalMs / 3600000
+	minutes := totalMs % 3600000 / 60000
+	secs := totalMs % 60000 / 1000
+	ms := totalMs % 1000
+	return fmt.Sprintf("%02d:%02d:%02d.%03d", hours, minutes, secs, ms)
 }
 
 // ParseSegments 解析proj.llc文件中的片段信息

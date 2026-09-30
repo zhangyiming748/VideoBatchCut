@@ -150,11 +150,14 @@ func videoEncoderArgs(e Encoder) []string {
 			"-allow_sw", "1",
 		}
 	case EncoderIntel:
-		// 与 hwaccel.go probeQsv 一致
+		// 与 hwaccel.go probeQsv 一致。
+		// ⚠️ -global_quality 必须带 :v 后缀：它是 AVCodecContext 通用选项，不加后缀会同时
+		// 套到音频流上，使 libopus 进入 quality-based 模式并与 -b:a 冲突，直接报
+		// “Quality-based encoding not supported” 打开编码器失败。
 		return []string{
 			"-c:v", "h264_qsv",
 			"-preset", "veryslow",
-			"-global_quality", "18",
+			"-global_quality:v", "18",
 			"-look_ahead", "1",
 			"-look_ahead_depth", "40",
 			"-extbrc", "1",
@@ -236,11 +239,13 @@ type Audio struct {
 // （直接复制音频流 / 丢弃音频），仅在确有需要的特例下使用。
 func AudioOpus() Audio {
 	// 高质量 Opus：192k VBR + audio 应用模式 + 最高压缩档，取向高保真而非编码速度。
+	// ⚠️ -compression_level 必须带 :a 后缀：它也是通用选项，不加后缀会漏到视频编码器上
+	// （如 h264_qsv 的合法范围是 0-7，会告警 “Invalid compression level”）。
 	return Audio{
 		Codec:       "libopus",
 		Bitrate:     "192k",
 		Application: "audio",
-		Extra:       []string{"-vbr", "on", "-compression_level", "10"},
+		Extra:       []string{"-vbr", "on", "-compression_level:a", "10"},
 	}
 }
 func AudioCopy() Audio { return Audio{Codec: "copy"} }

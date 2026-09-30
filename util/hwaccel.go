@@ -139,7 +139,7 @@ func probeQsv() bool {
 		"-f", "lavfi", "-i", "nullsrc=s=256x256:d=1",
 		"-c:v", "h264_qsv",
 		"-preset", "veryslow",
-		"-global_quality", "18",
+		"-global_quality:v", "18",
 		"-look_ahead", "1",
 		"-look_ahead_depth", "40",
 		"-extbrc", "1",
