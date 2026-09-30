@@ -15,6 +15,8 @@ import (
 // 与 AnyVideoToMP4 不同：无论转换成功还是失败，原文件一律保留、不删除不重命名；
 // 新文件在扩展名之前追加 "duplicate" 后缀，如 video.mkv -> video.duplicate.mp4、
 // video.mp4 -> video.duplicate.mp4。
+// 转换前先做字幕预检（util.HasIncompatibleSubtitles）：含 MP4 无法封装的图形字幕
+// （PGS/VobSub）时打印提示并跳过该文件，而不是让 ffmpeg 转换失败。
 func Fix(root string) {
 	videos := finder.FindAllVideos(root)
 	for _, video := range videos {
@@ -23,6 +25,12 @@ func Fix(root string) {
 			continue
 		}
 		outName := strings.TrimSuffix(video, filepath.Ext(video)) + ".duplicate.mp4"
+		// 字幕预检：含 MP4 无法封装的图形字幕（PGS/VobSub）则跳过该文件，
+		// 避免 ffmpeg 转换中途失败。与 util.Convert 的预检逻辑一致。
+		if util.HasIncompatibleSubtitles(video, outName) {
+			log.Printf("fix跳过文件%s：含 MP4 无法封装的字幕流\n", video)
+			continue
+		}
 		// NewJob 默认：自动硬件编码 + 高质量 Opus 音频 + 覆盖输出
 		job := util.NewJob(video, outName)
 		log.Printf("执行命令:%v\n", job.String())

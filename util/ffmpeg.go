@@ -352,7 +352,7 @@ func allStreamMaps(output string) []string {
 // 背景：-af 只能作用于单条输出音频流，一旦输入有多条音轨且全部映射，ffmpeg 会直接报错
 // “Filtergraph ... was specified through the -vf/-af/-df option for output stream 0:a:N”，
 // 因此多音轨场景必须改用 filter_complex 给每条音轨分别挂滤镜。
-func audioFilterComplexArgs(input string, audioFilter string, n int) []string {
+func audioFilterComplexArgs(audioFilter string, n int) []string {
 	var parts []string
 	args := []string{"-filter_complex"}
 	var graph strings.Builder
@@ -545,7 +545,7 @@ func (j *Job) Args() []string {
 	}
 	if useFilterComplex {
 		// 多音轨：每条音轨分别挂滤镜，音频映射由 filter_complex 分支给出
-		args = append(args, audioFilterComplexArgs(j.Input, j.AudioFilter, nAudio)...)
+		args = append(args, audioFilterComplexArgs(j.AudioFilter, nAudio)...)
 		args = append(args, "-map", "0:v?", "-map", "0:s?", "-map", "0:d?")
 		if strings.EqualFold(filepath.Ext(j.Output), ".mkv") {
 			args = append(args, "-map", "0:t?")
