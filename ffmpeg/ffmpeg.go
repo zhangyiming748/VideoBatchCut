@@ -6,22 +6,26 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strconv"
 	"strings"
 
 	"VideoBatchCut/util"
 )
 
-var (
-	OperatingSystem string
-	Architecture    string
-)
-
-func init() {
-	OperatingSystem = runtime.GOOS
-	Architecture = runtime.GOARCH
-}
+// 注释掉 OperatingSystem / Architecture 及 init() 的原因：
+// 这两个全局变量在全项目中没有任何引用，硬件平台判断已收敛到 util/hwaccel.go 的
+// HasNvidia/HasIntel/HasAMD/HasAppleSilicon/HasQualcomm 函数中，直接使用 runtime.GOOS/GOARCH。
+// 保留这两个变量只会造成信息冗余和维护负担，故注释掉（不直接删除是为了留档，
+// 万一后续有外部代码依赖可快速恢复）。
+// var (
+// 	OperatingSystem string
+// 	Architecture    string
+// )
+//
+// func init() {
+// 	OperatingSystem = runtime.GOOS
+// 	Architecture = runtime.GOARCH
+// }
 
 /*
 输入文件名和时间点切片

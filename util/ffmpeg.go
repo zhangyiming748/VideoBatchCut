@@ -26,8 +26,8 @@
 //
 // 流保留保证：默认（MapAllStreams）把输入的所有视频/音频/字幕/数据流全部映射到输出，
 // 并按输出容器自动指定字幕编码（MP4→mov_text、MKV→srt）。含 PGS / DVD 等图形字幕的
-// 文件无法封装进 MP4，转换前必须先经 HasIncompatibleSubtitles 预检并跳过该文件
-// （只打印错误、不中断批处理），避免转换中途失败或悄悄丢字幕。
+// 文件无法封装进 MP4，转换前必须先经 IncompatibleSubtitles 预检并跳过该文件
+// （只返回错误、不中断批处理），避免转换中途失败或悄悄丢字幕。
 package util
 
 import (
@@ -246,6 +246,18 @@ func inputHwaccelArgs(e Encoder) []string {
 	case EncoderIntel:
 		// QSV 硬解需同时把输出指定为 qsv surface，供 h264_qsv 编码零拷贝消费
 		return []string{"-hwaccel", "qsv", "-hwaccel_output_format", "qsv"}
+	case EncoderQualcomm:
+		// Windows ARM64 高通平台：Media Foundation 编码器可配合 D3D11VA 做硬件解码，
+		// 降低 CPU 占用、解码帧直接留在 GPU 供 h264_mf 编码消费。
+		return []string{"-hwaccel", "d3d11va"}
+	case EncoderApple:
+		// VideoToolbox 编码器本身不通过 -hwaccel 暴露硬解接口，ffmpeg 会在需要时自动使用 VT 解码，
+		// 故此处不追加 -hwaccel 参数。
+		return nil
+	case EncoderAMD:
+		// AMF 编码器无配套的 -hwaccel 解码路径，硬解需走 D3D11VA/VAAPI 但跨平台兼容性差，
+		// 故默认走软解以保证稳定性；如需硬解可在 Job.PreInputArgs 手动追加。
+		return nil
 	default:
 		return nil
 	}
@@ -336,22 +348,6 @@ func IncompatibleSubtitles(input, output string) ([]string, error) {
 		}
 	}
 	return bad, nil
-}
-
-// HasIncompatibleSubtitles 供批量转换入口做前置预检：文件含目标容器装不下的字幕（如 PGS→MP4）时返回 true。
-// 预检自身失败（如 ffprobe 缺失）按保守策略同样返回 true 并打印错误，宁可跳过也不误转。
-func HasIncompatibleSubtitles(input, output string) bool {
-	bad, err := IncompatibleSubtitles(input, output)
-	if err != nil {
-		log.Printf("[ffmpeg] 字幕预检失败，跳过 %s: %v", input, err)
-		return true
-	}
-	if len(bad) > 0 {
-		log.Printf("[ffmpeg] %s 含 %s 容器无法封装的字幕流 %v，跳过该文件（保留原文件）",
-			input, filepath.Ext(output), bad)
-		return true
-	}
-	return false
 }
 
 // audioStreamCount 返回输入文件的音频流数量；探测失败返回 0（按单音频流保守处理）。
@@ -618,9 +614,36 @@ func (j *Job) Command() *exec.Cmd { return exec.Command("ffmpeg", j.Args()...) }
 func (j *Job) String() string { return j.Command().String() }
 
 // Run 构建并执行命令，复用 util.Exec 的日志与错误处理。
+// 若当前编码器是硬件编码器（NVIDIA/Apple/Intel/AMD/Qualcomm）且执行失败，
+// 自动回退到 CPU 编码（EncoderX265）重试一次，避免整批任务因个别硬件兼容性问题中断。
+// 强制指定的软件编码器（X264/X265/Copy/None）不触发回退。
 func (j *Job) Run() error {
-	log.Printf("[ffmpeg] 选用视频编码器: %s", j.ResolvedEncoder())
-	return Exec(j.Command())
+	enc := j.ResolvedEncoder()
+	log.Printf("[ffmpeg] 选用视频编码器: %s", enc)
+	if err := Exec(j.Command()); err != nil {
+		if isHardwareEncoder(enc) {
+			log.Printf("[ffmpeg] 硬件编码器 %s 失败，回退到 CPU (libx265) 重试: %v", enc, err)
+			backup := *j
+			backup.Encoder = EncoderX265
+			if err2 := Exec(backup.Command()); err2 != nil {
+				return fmt.Errorf("硬件编码 %s 失败(%v)，CPU 回退也失败: %w", enc, err, err2)
+			}
+			log.Printf("[ffmpeg] CPU 回退编码成功")
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+// isHardwareEncoder 判断编码器是否为硬件编码器（用于失败时决定是否回退到 CPU）。
+func isHardwareEncoder(e Encoder) bool {
+	switch e {
+	case EncoderNvidia, EncoderApple, EncoderIntel, EncoderAMD, EncoderQualcomm:
+		return true
+	default:
+		return false
+	}
 }
 
 // Convert 是最顶层的便捷函数：只给输入和输出文件名，视频编码参数由 hwaccel.go 自动判定，
@@ -628,8 +651,10 @@ func (j *Job) Run() error {
 // 转换前预检字幕兼容性：含目标容器装不下的字幕（如 MKV 的 PGS→MP4）时直接跳过——
 // 只返回错误、不动输入文件，批量调用方打印错误后继续下一个即可。
 func Convert(input, output string) error {
-	if HasIncompatibleSubtitles(input, output) {
-		return fmt.Errorf("跳过 %s：含 %s 容器无法封装的字幕流", input, filepath.Ext(output))
+	if bad, err := IncompatibleSubtitles(input, output); err != nil {
+		return fmt.Errorf("字幕预检失败 %s: %w", input, err)
+	} else if len(bad) > 0 {
+		return fmt.Errorf("跳过 %s：含 %s 容器无法封装的字幕流 %v", input, filepath.Ext(output), bad)
 	}
 	return NewJob(input, output).Run()
 }

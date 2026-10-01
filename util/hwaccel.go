@@ -12,10 +12,17 @@
 package util
 
 import (
+	"context"
 	"os/exec"
 	"runtime"
 	"sync"
+	"time"
 )
+
+// probeTimeout 单次硬件编码探测的最长等待时间。
+// 正常探测（256x256 1 秒合成源）通常 <1 秒，给 15 秒余量覆盖机器卡顿场景；
+// 超时直接视为该硬件不可用，避免驱动异常时永久卡死整批任务。
+const probeTimeout = 15 * time.Second
 
 // probeCache 缓存一次“真实编码探测”的结果，保证整批处理中每种探测只真跑一次。
 type probeCache struct {
@@ -48,8 +55,9 @@ func hasFFmpeg() bool {
 
 // HasNvidia 判断 ffmpeg 是否真的能用 h264_nvenc 编码（而非仅检测有无 N 卡）。
 func HasNvidia() bool {
-	// macOS 上不走 NVENC（苹果平台统一用 VideoToolbox），直接短路，省去无谓的编码探测
-	if runtime.GOOS == "darwin" {
+	// 平台门槛：NVENC 仅在 amd64 的 Windows/Linux 上可用；
+	// macOS 统一走 VideoToolbox，ARM64（含 Windows ARM64）无 NVENC，直接短路省去无谓探测。
+	if runtime.GOOS == "darwin" || runtime.GOARCH != "amd64" {
 		return false
 	}
 	if !hasFFmpeg() {
@@ -60,11 +68,11 @@ func HasNvidia() bool {
 
 // HasIntel 判断 ffmpeg 是否真的能用 h264_qsv 编码。
 func HasIntel() bool {
-	// 平台门槛：本分支的 QSV 参数按 Windows 设计（自动选默认适配器，不带 -init_hw_device）。
-	// Linux 上的 QSV 需要显式 -init_hw_device 指向 render 节点（见 README），与本分支参数不匹配；
-	// 若仅凭编码探测放行，可能在 Linux 上误入本分支、导致 -hwaccel qsv 解码失败。故沿用 Windows-only 约束
-	//（该约束已隐含排除 macOS：macOS 统一走 VideoToolbox，不会进入本 Intel 分支）。
-	if runtime.GOOS != "windows" {
+	// 平台门槛：QSV 仅 Windows amd64。
+	// 本分支参数按 Windows 设计（自动选默认适配器，不带 -init_hw_device）；
+	// Linux QSV 需显式 -init_hw_device 指向 render 节点，与本分支参数不匹配；
+	// ARM64（含 Windows ARM64）无 Intel iGPU，直接短路。
+	if runtime.GOOS != "windows" || runtime.GOARCH != "amd64" {
 		return false
 	}
 	if !hasFFmpeg() {
@@ -75,8 +83,9 @@ func HasIntel() bool {
 
 // HasAMD 判断 ffmpeg 是否真的能用 h264_amf 编码。
 func HasAMD() bool {
-	// macOS 上不走 AMF（AMF 仅 Windows 提供），直接短路，省去无谓的编码探测
-	if runtime.GOOS == "darwin" {
+	// 平台门槛：AMF 仅 Windows amd64 提供；
+	// macOS 统一走 VideoToolbox，ARM64（含 Windows ARM64）无 AMF，直接短路省去无谓探测。
+	if runtime.GOOS != "windows" || runtime.GOARCH != "amd64" {
 		return false
 	}
 	if !hasFFmpeg() {
@@ -115,6 +124,27 @@ func HasQualcomm() bool {
 	return mediaFoundationProbe.get(probeMediaFoundation)
 }
 
+// runProbe 带超时地执行一次 ffmpeg 探测命令，退出码为 0 才返回 true。
+// 超时（驱动异常导致 ffmpeg 卡死）同样返回 false，避免拖垮整批任务。
+func runProbe(cmd *exec.Cmd) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
+	defer cancel()
+	// Stdout/Stderr 均为 nil 时 Go 会把 ffmpeg 输出接到 /dev/null，探测过程不污染批处理日志
+	if err := cmd.Start(); err != nil {
+		return false
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case <-ctx.Done():
+		// 超时：杀掉进程并返回 false
+		_ = cmd.Process.Kill()
+		return false
+	case err := <-done:
+		return err == nil
+	}
+}
+
 // probeNvenc 用一段合成源跑一次真实的 h264_nvenc 最小编码，退出码为 0 才认为 NVENC 可用。
 //
 // 为什么不能只看 nvidia-smi 是否存在 + ffmpeg 是否编译了 h264_nvenc：
@@ -142,7 +172,7 @@ func probeNvenc() bool {
 		"-f", "null", "-",
 	)
 	// Stdout/Stderr 均为 nil 时 Go 会把 ffmpeg 输出接到 /dev/null，探测过程不会污染批处理日志
-	return probe.Run() == nil
+	return runProbe(probe)
 }
 
 // probeQsv 用合成源跑一次真实的 h264_qsv 最小编码，退出码为 0 才认为 QSV 可用。
@@ -168,7 +198,7 @@ func probeQsv() bool {
 		"-profile:v", "high",
 		"-f", "null", "-",
 	)
-	return probe.Run() == nil
+	return runProbe(probe)
 }
 
 // probeAmf 用合成源跑一次真实的 h264_amf 最小编码，退出码为 0 才认为 AMF 可用。
@@ -191,7 +221,7 @@ func probeAmf() bool {
 		"-profile", "high",
 		"-f", "null", "-",
 	)
-	return probe.Run() == nil
+	return runProbe(probe)
 }
 
 // probeVideoToolbox 用合成源跑一次真实的 h264_videotoolbox 最小编码，退出码为 0 才认为可用。
@@ -208,7 +238,7 @@ func probeVideoToolbox() bool {
 		"-allow_sw", "1",
 		"-f", "null", "-",
 	)
-	return probe.Run() == nil
+	return runProbe(probe)
 }
 
 // probeMediaFoundation 用合成源跑一次真实的 h264_mf 最小编码，退出码为 0 才认为 Media Foundation 可用。
@@ -231,5 +261,5 @@ func probeMediaFoundation() bool {
 		"-pix_fmt", "yuv420p",
 		"-f", "null", "-",
 	)
-	return probe.Run() == nil
+	return runProbe(probe)
 }
