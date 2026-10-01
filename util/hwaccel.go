@@ -29,11 +29,12 @@ func (c *probeCache) get(probe func() bool) bool {
 }
 
 var (
-	ffmpegProbe       probeCache
-	nvencProbe        probeCache
-	qsvProbe          probeCache
-	amfProbe          probeCache
-	videotoolboxProbe probeCache
+	ffmpegProbe          probeCache
+	nvencProbe           probeCache
+	qsvProbe             probeCache
+	amfProbe             probeCache
+	videotoolboxProbe    probeCache
+	mediaFoundationProbe probeCache
 )
 
 // hasFFmpeg 探测 ffmpeg 二进制是否存在。缺失时直接判定所有硬件编码器不可用，
@@ -96,6 +97,22 @@ func HasAppleSilicon() bool {
 		return false
 	}
 	return videotoolboxProbe.get(probeVideoToolbox)
+}
+
+// HasQualcomm 判断是否为 Windows ARM64 高通平台（Surface 10/11 等）且 ffmpeg 真的能用 h264_mf 编码。
+// 高通 Adreno GPU 在 Windows ARM64 上通过 Media Foundation 暴露硬件编码器（h264_mf），
+// 这也是该平台 ffmpeg 可用的硬件编码路径（无 NVENC/QSV/AMF）。
+func HasQualcomm() bool {
+	// 平台门槛：仅 Windows + arm64 走 Media Foundation 分支。
+	// x86/x64 的 Windows 不走此分支（一般另有 Intel/AMD/NVIDIA 硬件）；
+	// 非 Windows 平台 Media Foundation 不存在，探测自然失败，无需额外门槛。
+	if runtime.GOOS != "windows" || runtime.GOARCH != "arm64" {
+		return false
+	}
+	if !hasFFmpeg() {
+		return false
+	}
+	return mediaFoundationProbe.get(probeMediaFoundation)
 }
 
 // probeNvenc 用一段合成源跑一次真实的 h264_nvenc 最小编码，退出码为 0 才认为 NVENC 可用。
@@ -189,6 +206,29 @@ func probeVideoToolbox() bool {
 		"-coder", "cabac",
 		"-spatial_aq", "1",
 		"-allow_sw", "1",
+		"-f", "null", "-",
+	)
+	return probe.Run() == nil
+}
+
+// probeMediaFoundation 用合成源跑一次真实的 h264_mf 最小编码，退出码为 0 才认为 Media Foundation 可用。
+// Windows ARM64 高通平台（Surface 10/11 等）的 Adreno GPU 通过 Media Foundation 提供硬件编码。
+// 探测参数需与 ffmpeg 包 EncoderQualcomm 分支保持一致。
+func probeMediaFoundation() bool {
+	probe := exec.Command("ffmpeg",
+		"-hide_banner",
+		"-f", "lavfi", "-i", "nullsrc=s=256x256:d=1",
+		"-c:v", "h264_mf",
+		"-profile:v", "high",
+		"-level", "4.2",
+		"-b:v", "10M",
+		"-maxrate", "14M",
+		"-bufsize", "20M",
+		"-g", "120",
+		"-bf", "3",
+		"-refs", "4",
+		"-coder", "1",
+		"-pix_fmt", "yuv420p",
 		"-f", "null", "-",
 	)
 	return probe.Run() == nil

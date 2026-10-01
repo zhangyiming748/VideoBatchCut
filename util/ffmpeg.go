@@ -20,7 +20,7 @@
 // 只想看命令、先不执行：job.Args() 返回参数切片，job.String() 返回完整命令字符串。
 //
 // ⚠️ 单一事实来源：各硬件分支的视频编码参数（videoEncoderArgs）必须与 hwaccel.go 里
-// 对应的 probe*（probeNvenc / probeQsv / probeAmf / probeVideoToolbox）保持一致——
+// 对应的 probe*（probeNvenc / probeQsv / probeAmf / probeVideoToolbox / probeMediaFoundation）保持一致——
 // 探测用的就是这套参数，只有两者一致，“探测通过” 才等价于 “真实编码能跑通”。
 // 改动其中一处，另一处必须同步。
 //
@@ -46,15 +46,16 @@ import (
 type Encoder int
 
 const (
-	EncoderAuto   Encoder = iota // 交给 SelectEncoder 按硬件自动选择（Job.Encoder 的默认值）
-	EncoderNvidia                // h264_nvenc（NVIDIA NVENC）
-	EncoderApple                 // h264_videotoolbox（Apple Silicon VideoToolbox）
-	EncoderIntel                 // h264_qsv（Intel Quick Sync，仅 Windows）
-	EncoderAMD                   // h264_amf（AMD，仅 Windows）
-	EncoderX264                  // libx264（CPU，FASTCUT 快速档）
-	EncoderX265                  // libx265（CPU，高质量档）
-	EncoderCopy                  // -c:v copy，直接复制视频流不重编码
-	EncoderNone                  // 不加任何视频编码参数（音频-only 任务，如 wav→mp3）
+	EncoderAuto     Encoder = iota // 交给 SelectEncoder 按硬件自动选择（Job.Encoder 的默认值）
+	EncoderNvidia                  // h264_nvenc（NVIDIA NVENC）
+	EncoderApple                   // h264_videotoolbox（Apple Silicon VideoToolbox）
+	EncoderIntel                   // h264_qsv（Intel Quick Sync，仅 Windows）
+	EncoderAMD                     // h264_amf（AMD，仅 Windows）
+	EncoderQualcomm                // h264_mf（高通 Media Foundation，仅 Windows ARM64）
+	EncoderX264                    // libx264（CPU，FASTCUT 快速档）
+	EncoderX265                    // libx265（CPU，高质量档）
+	EncoderCopy                    // -c:v copy，直接复制视频流不重编码
+	EncoderNone                    // 不加任何视频编码参数（音频-only 任务，如 wav→mp3）
 )
 
 // 音频滤镜常量，供 Job.AudioFilter 组合使用。
@@ -78,6 +79,8 @@ func (e Encoder) String() string {
 		return "h264_qsv"
 	case EncoderAMD:
 		return "h264_amf"
+	case EncoderQualcomm:
+		return "h264_mf"
 	case EncoderX264:
 		return "libx264"
 	case EncoderX265:
@@ -92,7 +95,7 @@ func (e Encoder) String() string {
 }
 
 // SelectEncoder 结合 hwaccel.go 的探测结果，选出当前机器可用的最优视频编码器。
-// 优先级：NVIDIA > Apple > Intel > AMD > CPU（FASTCUT=yes 用 libx264，否则 libx265）。
+// 优先级：NVIDIA > Apple > Intel > AMD > Qualcomm > CPU（FASTCUT=yes 用 libx264，否则 libx265）。
 // 这些探测结果都带缓存（见 hwaccel.go 的 probeCache），重复调用不会反复拉起 ffmpeg 探测进程。
 func SelectEncoder() Encoder {
 	switch {
@@ -104,6 +107,8 @@ func SelectEncoder() Encoder {
 		return EncoderIntel
 	case HasAMD():
 		return EncoderAMD
+	case HasQualcomm():
+		return EncoderQualcomm
 	case os.Getenv("FASTCUT") == "yes":
 		return EncoderX264
 	default:
@@ -180,6 +185,28 @@ func videoEncoderArgs(e Encoder) []string {
 			"-vbaq", "true",
 			"-preanalysis", "true",
 			"-profile", "high",
+		}
+	case EncoderQualcomm:
+		// 与 hwaccel.go probeMediaFoundation 一致。
+		// Windows ARM64 高通平台通过 Media Foundation 走 h264_mf 硬件编码。
+		// 参数取向 1080p60 中上等画质，并针对纯色区域 banding/暗影做了优化：
+		//   - level 4.2 支撑 1080p@60；
+		//   - VBR 目标 10M / 峰值 14M（相比初版提高，缓解纯色区域量化色带）；
+		//   - CABAC 熵编码 + 4 参考帧，同等码率下质量更优、纯色伪影更少；
+		//   - g=120 约 2 秒一个关键帧，兼顾随机访问与压缩率。
+		// 注意：h264_mf 无 x264 的 aq-mode/psy-rd 等高级调优，纯色 banding 主要靠码率兜底。
+		return []string{
+			"-c:v", "h264_mf",
+			"-profile:v", "high",
+			"-level", "4.2",
+			"-b:v", "10M",
+			"-maxrate", "14M",
+			"-bufsize", "20M",
+			"-g", "120",
+			"-bf", "3",
+			"-refs", "4",
+			"-coder", "1",
+			"-pix_fmt", "yuv420p",
 		}
 	case EncoderX264:
 		// CPU 快速档（FASTCUT）：平衡速度与质量
