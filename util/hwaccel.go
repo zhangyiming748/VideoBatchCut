@@ -112,10 +112,13 @@ func HasAppleSilicon() bool {
 // 高通 Adreno GPU 在 Windows ARM64 上通过 Media Foundation 暴露硬件编码器（h264_mf），
 // 这也是该平台 ffmpeg 可用的硬件编码路径（无 NVENC/QSV/AMF）。
 func HasQualcomm() bool {
-	// 平台门槛：仅 Windows + arm64 走 Media Foundation 分支。
-	// x86/x64 的 Windows 不走此分支（一般另有 Intel/AMD/NVIDIA 硬件）；
-	// 非 Windows 平台 Media Foundation 不存在，探测自然失败，无需额外门槛。
-	if runtime.GOOS != "windows" || runtime.GOARCH != "arm64" {
+	// 平台门槛：所有 Windows 都允许进入真实探测（不再强制 GOARCH==arm64）。
+	// 原因：Windows on ARM（Surface 10/11 等高通机型）上用户安装的 ffmpeg 常为 x64 构建、
+	// 靠 x64 模拟运行，此时 Go 二进制的 GOARCH 是 amd64，但 h264_mf 经 Media Foundation 的 COM
+	// 接口仍能调到高通硬件编码器；若用 GOARCH 把 amd64 一刀切掉，模拟运行场景会被误杀。
+	// 安全性由后面的“真实编码探测”兜底——探测通过才认为可用，无需担心误判。
+	// 优先级低于 NVIDIA/Intel/AMD：普通 x64 PC 在前面三个分支就会命中，走不到这里。
+	if runtime.GOOS != "windows" {
 		return false
 	}
 	if !hasFFmpeg() {
@@ -242,14 +245,20 @@ func probeVideoToolbox() bool {
 }
 
 // probeMediaFoundation 用合成源跑一次真实的 h264_mf 最小编码，退出码为 0 才认为 Media Foundation 可用。
-// Windows ARM64 高通平台（Surface 10/11 等）的 Adreno GPU 通过 Media Foundation 提供硬件编码。
+// Windows ARM64 高通平台（Surface 10/11 等）的 Adreno GPU 通过 Media Foundation 提供硬件编码，
+// 普通 x64 PC 无可用 NVENC/QSV/AMF 时也可借此获得硬件编码。
 // 探测参数需与 ffmpeg 包 EncoderQualcomm 分支保持一致。
+//
+// ⚠️ -profile:v 必须传数字 profile_idc，不能传 "high" 字符串：
+// h264_mf 的 profile 选项是整数枚举（66=Baseline / 77=Main / 100=High），
+// 传 "high" 会在参数解析阶段直接报 “Unable to parse profile option value” 而失败
+// （此问题与硬件无关，任何机器上都必现）。
 func probeMediaFoundation() bool {
 	probe := exec.Command("ffmpeg",
 		"-hide_banner",
 		"-f", "lavfi", "-i", "nullsrc=s=256x256:d=1",
 		"-c:v", "h264_mf",
-		"-profile:v", "high",
+		"-profile:v", "100",
 		"-level", "4.2",
 		"-b:v", "10M",
 		"-maxrate", "14M",

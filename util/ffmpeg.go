@@ -195,9 +195,10 @@ func videoEncoderArgs(e Encoder) []string {
 		//   - CABAC 熵编码 + 4 参考帧，同等码率下质量更优、纯色伪影更少；
 		//   - g=120 约 2 秒一个关键帧，兼顾随机访问与压缩率。
 		// 注意：h264_mf 无 x264 的 aq-mode/psy-rd 等高级调优，纯色 banding 主要靠码率兜底。
+		// ⚠️ -profile:v 必须传数字 profile_idc（100=High），传 "high" 字符串 h264_mf 无法解析。
 		return []string{
 			"-c:v", "h264_mf",
-			"-profile:v", "high",
+			"-profile:v", "100",
 			"-level", "4.2",
 			"-b:v", "10M",
 			"-maxrate", "14M",
