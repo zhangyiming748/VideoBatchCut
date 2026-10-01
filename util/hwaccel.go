@@ -244,20 +244,30 @@ func probeVideoToolbox() bool {
 	return runProbe(probe)
 }
 
-// probeMediaFoundation 用合成源跑一次真实的 h264_mf 最小编码，退出码为 0 才认为 Media Foundation 可用。
-// Windows ARM64 高通平台（Surface 10/11 等）的 Adreno GPU 通过 Media Foundation 提供硬件编码，
-// 普通 x64 PC 无可用 NVENC/QSV/AMF 时也可借此获得硬件编码。
-// 探测参数需与 ffmpeg 包 EncoderQualcomm 分支保持一致。
+// probeMediaFoundation 探测是否存在真正可用的 Media Foundation 硬件 H.264 编码器，
+// 退出码为 0 才认为可用。适用于 Windows ARM64 高通平台（Surface 10/11 等）以及任何
+// 通过 Media Foundation 暴露硬编码器的 Windows 机器。
 //
-// ⚠️ -profile:v 必须传数字 profile_idc，不能传 "high" 字符串：
-// h264_mf 的 profile 选项是整数枚举（66=Baseline / 77=Main / 100=High），
-// 传 "high" 会在参数解析阶段直接报 “Unable to parse profile option value” 而失败
-// （此问题与硬件无关，任何机器上都必现）。
+// 为什么探测要刻意走「d3d11 设备 → hwupload 上传显存帧 → -hw_encoding 1」这条全硬链路，
+// 而不是像其它 probe* 那样直接拿 nullsrc 软帧编码：
+// h264_mf 不加 -hw_encoding 时会优先选用微软的软件 MFT（CPU 编码），那种“探测通过”
+// 只代表机器上装了 Media Foundation，不代表有可用硬件编码器，真实任务就会出现
+// “日志显示 h264_mf、但 CPU 70%+ / GPU 1%”的假象。-hw_encoding 1 又只接受 d3d11
+// 显存帧，所以探测必须先 -init_hw_device d3d11va 建设备、format=nv12,hwupload 上传。
+//
+// ⚠️ -profile:v 必须传数字 profile_idc（66=Baseline / 77=Main / 100=High），
+// 传 "high" 字符串会在参数解析阶段直接失败（与硬件无关，任何机器必现）。
+// 编码质量参数需与 ffmpeg 包 EncoderQualcomm 分支保持一致；该分支真实任务由
+// -hwaccel d3d11va -hwaccel_output_format d3d11 提供显存帧，探测则用 hwupload 等价模拟。
 func probeMediaFoundation() bool {
 	probe := exec.Command("ffmpeg",
 		"-hide_banner",
+		"-init_hw_device", "d3d11va=hw",
+		"-filter_hw_device", "hw",
 		"-f", "lavfi", "-i", "nullsrc=s=256x256:d=1",
+		"-vf", "format=nv12,hwupload",
 		"-c:v", "h264_mf",
+		"-hw_encoding", "1",
 		"-profile:v", "100",
 		"-level", "4.2",
 		"-b:v", "10M",
@@ -267,7 +277,6 @@ func probeMediaFoundation() bool {
 		"-bf", "3",
 		"-refs", "4",
 		"-coder", "1",
-		"-pix_fmt", "yuv420p",
 		"-f", "null", "-",
 	)
 	return runProbe(probe)

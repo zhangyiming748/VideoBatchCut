@@ -188,16 +188,21 @@ func videoEncoderArgs(e Encoder) []string {
 		}
 	case EncoderQualcomm:
 		// 与 hwaccel.go probeMediaFoundation 一致。
-		// Windows ARM64 高通平台通过 Media Foundation 走 h264_mf 硬件编码。
+		// Windows 平台（含 ARM64 高通 Surface）通过 Media Foundation 走 h264_mf 硬件编码。
 		// 参数取向 1080p60 中上等画质，并针对纯色区域 banding/暗影做了优化：
+		//   - hw_encoding 1 强制枚举硬件 MFT：不加时 h264_mf 可能静默落到微软 CPU 软编码器，
+		//     表现为 CPU 70%+ / GPU 1%（编码其实在 CPU 跑）；
 		//   - level 4.2 支撑 1080p@60；
 		//   - VBR 目标 10M / 峰值 14M（相比初版提高，缓解纯色区域量化色带）；
 		//   - CABAC 熵编码 + 4 参考帧，同等码率下质量更优、纯色伪影更少；
 		//   - g=120 约 2 秒一个关键帧，兼顾随机访问与压缩率。
+		// 必须配合输入端 -hwaccel d3d11va -hwaccel_output_format d3d11 提供显存帧，
+		// 且此处不能写 -pix_fmt yuv420p（强制下载回 CPU 会导致硬编码器打开失败）。
 		// 注意：h264_mf 无 x264 的 aq-mode/psy-rd 等高级调优，纯色 banding 主要靠码率兜底。
 		// ⚠️ -profile:v 必须传数字 profile_idc（100=High），传 "high" 字符串 h264_mf 无法解析。
 		return []string{
 			"-c:v", "h264_mf",
+			"-hw_encoding", "1",
 			"-profile:v", "100",
 			"-level", "4.2",
 			"-b:v", "10M",
@@ -207,7 +212,6 @@ func videoEncoderArgs(e Encoder) []string {
 			"-bf", "3",
 			"-refs", "4",
 			"-coder", "1",
-			"-pix_fmt", "yuv420p",
 		}
 	case EncoderX264:
 		// CPU 快速档（FASTCUT）：平衡速度与质量
@@ -248,9 +252,12 @@ func inputHwaccelArgs(e Encoder) []string {
 		// QSV 硬解需同时把输出指定为 qsv surface，供 h264_qsv 编码零拷贝消费
 		return []string{"-hwaccel", "qsv", "-hwaccel_output_format", "qsv"}
 	case EncoderQualcomm:
-		// Windows ARM64 高通平台：Media Foundation 编码器可配合 D3D11VA 做硬件解码，
-		// 降低 CPU 占用、解码帧直接留在 GPU 供 h264_mf 编码消费。
-		return []string{"-hwaccel", "d3d11va"}
+		// Windows ARM64 高通平台：Media Foundation 硬件编码器必须吃 d3d11 显存帧。
+		// -hwaccel_output_format d3d11 让解码帧留在 GPU（NV12），编码端零拷贝；
+		// 遇到 d3d11va 解不了的编码，ffmpeg 会自动回退软解并插入 hwupload，链路不中断。
+		// 注意：此分支绝不能再指定 -pix_fmt yuv420p，否则强制把帧下载回 CPU，
+		// 硬编码器拒收并报 “Error reinitializing filters”。
+		return []string{"-hwaccel", "d3d11va", "-hwaccel_output_format", "d3d11"}
 	case EncoderApple:
 		// VideoToolbox 编码器本身不通过 -hwaccel 暴露硬解接口，ffmpeg 会在需要时自动使用 VT 解码，
 		// 故此处不追加 -hwaccel 参数。
