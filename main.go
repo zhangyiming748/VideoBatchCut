@@ -114,6 +114,21 @@ func main() {
 	// 为 archive 命令添加标志
 	archiveCmd.Flags().StringP("dir", "d", "./", "根目录路径 (必需)")
 
+	// 添加 merge 命令
+	var mergeCmd = &cobra.Command{
+		Use:   "merge",
+		Short: "内嵌字幕",
+		Long:  "遍历根目录下的每个子文件夹，将同一文件夹内同名的 MP4 和 SRT 配对，在视频流和音频流直接复制的前提下把 SRT 内嵌进 MP4",
+		Run: func(cmd *cobra.Command, args []string) {
+			dir, _ := cmd.Flags().GetString("dir")
+			fmt.Printf("开始执行字幕内嵌任务...\n根目录：%s\n", dir)
+			core.Merge(dir)
+		},
+	}
+	// 为 merge 命令添加标志，并用 cobra 自带的必填校验强制要求 --dir
+	mergeCmd.Flags().StringP("dir", "d", "./", "根目录路径 (必需)")
+	mergeCmd.MarkFlagRequired("dir")
+
 	// 添加version命令
 	var versionCmd = &cobra.Command{
 		Use:   "version",
@@ -127,6 +142,7 @@ func main() {
 	rootCmd.AddCommand(fastmp4Cmd)
 	rootCmd.AddCommand(fixCmd)
 	rootCmd.AddCommand(archiveCmd)
+	rootCmd.AddCommand(mergeCmd)
 	rootCmd.AddCommand(versionCmd)
 
 	// 添加全局 -v/--version 标志
