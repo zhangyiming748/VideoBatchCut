@@ -14,7 +14,8 @@ import (
 // 视频流、音频流直接复制（-c:v copy -c:a copy），不做任何重编码；
 // SRT 是文本字幕，MP4 容器要求 mov_text，故字幕转为 mov_text（仅文本格式转换）。
 // MP4 中原有的字幕流保留，新字幕作为追加的字幕流。
-// 处理时先输出到临时文件，校验成功后再替换原 MP4；外部 SRT 文件不动。
+// 处理时先输出到临时文件，校验成功后再替换原 MP4。
+// 本函数只负责内嵌与替换，外部 SRT 的去留由调用方（core.Merge）决定。
 func MergeSubtitle(mp4Path, srtPath string) error {
 	if !strings.EqualFold(filepath.Ext(mp4Path), ".mp4") {
 		return fmt.Errorf("%s 不是 mp4 文件", mp4Path)

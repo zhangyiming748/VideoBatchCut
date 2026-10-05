@@ -18,6 +18,8 @@ Merge 遍历根目录下的每一个文件夹，把同一文件夹内同名的 M
 
 配对严格限定在“同一个文件夹”内：A/01.mp4 只会与 A/01.srt 配对，
 不会与 B/01.srt 混淆。每个文件夹独立处理，互不影响。
+
+内嵌成功后删除外部 SRT；内嵌失败时保留 SRT 以便排查或重试。
 */
 func Merge(root string) {
 	folders := finder.FindAllFolders(root)
@@ -30,8 +32,13 @@ func Merge(root string) {
 				continue
 			}
 			if err := ffmpeg.MergeSubtitle(mp4Path, srtPath); err != nil {
-				log.Printf("文件夹%s中%s合并字幕失败，跳过: %v\n", folder, name, err)
+				// 内嵌失败：保留外部 SRT，方便排查或重试
+				log.Printf("文件夹%s中%s合并字幕失败，跳过并保留srt: %v\n", folder, name, err)
 				continue
+			}
+			// 内嵌成功：删除外部 SRT；删除失败仅记录日志，不影响已完成的内嵌结果
+			if err := os.Remove(srtPath); err != nil {
+				log.Printf("删除字幕文件%s失败: %v\n", srtPath, err)
 			}
 			if GracefullyExit.ShouldExit() {
 				log.Println("收到退出信号，结束任务")
