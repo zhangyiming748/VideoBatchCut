@@ -81,6 +81,24 @@ func main() {
 	// 为 fast 命令添加标志
 	fastmp4Cmd.Flags().StringP("dir", "d", "./", "根目录路径 (必需)")
 
+	// 添加mirror命令
+	var mirrorCmd = &cobra.Command{
+		Use:   "mirror",
+		Short: "硬件加速生成镜像MP4",
+		Long:  "根据指定的根目录，使用硬件加速在原视频相同位置生成扩展名前加_mirror后缀的MP4文件，不修改原视频，供其他软件打断点使用",
+		Run: func(cmd *cobra.Command, args []string) {
+			dir, _ := cmd.Flags().GetString("dir")
+			if dir == "" {
+				fmt.Println("错误：必须指定 --dir 参数")
+				return
+			}
+			fmt.Printf("开始执行镜像 MP4 任务...\n根目录：%s\n", dir)
+			core.Mirror(dir)
+		},
+	}
+	// 为 mirror 命令添加标志
+	mirrorCmd.Flags().StringP("dir", "d", "./", "根目录路径 (必需)")
+
 	// 添加fix命令
 	var fixCmd = &cobra.Command{
 		Use:   "fix",
@@ -140,6 +158,7 @@ func main() {
 
 	rootCmd.AddCommand(cutCmd)
 	rootCmd.AddCommand(fastmp4Cmd)
+	rootCmd.AddCommand(mirrorCmd)
 	rootCmd.AddCommand(fixCmd)
 	rootCmd.AddCommand(archiveCmd)
 	rootCmd.AddCommand(mergeCmd)
