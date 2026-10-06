@@ -51,9 +51,14 @@ func CutOne(fp string, timestamps []string) (err error) {
 	_ = os.Mkdir(folder, 0777)
 	length := len(timestamps)
 	log.Printf("时间戳%v\n", timestamps)
+	// 补零宽度由片段总数决定：不超过99补一位（两位宽度），超过99补两位（三位宽度）
+	width := 2
+	if length > 99 {
+		width = 3
+	}
 	for i := 0; i < length-1; i++ {
-		// 简化索引格式化逻辑
-		index := fmt.Sprintf("%02d", i+1)
+		// 按统一宽度补零，例如总数99时为 01、02，总数超过99时为 001、002
+		index := fmt.Sprintf("%0*d", width, i+1)
 		mp4 := strings.Join([]string{index, "mp4"}, ".")
 		mp4 = strings.Join([]string{folder, mp4}, string(os.PathSeparator))
 		// 精确切割 [timestamps[i], timestamps[i+1]]：编码器/音频/时间戳修复均由 util/ffmpeg.go 统一决定。
@@ -61,12 +66,7 @@ func CutOne(fp string, timestamps []string) (err error) {
 			return err
 		}
 	}
-	var last string
-	if length < 10 {
-		last = fmt.Sprintf("%02d", length)
-	} else {
-		last = fmt.Sprintf("%02d", length)
-	}
+	last := fmt.Sprintf("%0*d", width, length)
 	mp4 := strings.Join([]string{last, "mp4"}, ".")
 	mp4 = strings.Join([]string{folder, mp4}, string(os.PathSeparator))
 	// 最后一段：从 timestamps[length-1] 切到文件结尾（end 留空表示不限制），并输出机器可读进度。

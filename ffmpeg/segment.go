@@ -12,10 +12,15 @@ import (
 // mp4: 输入视频文件路径
 // segments: 切割片段列表
 func CutBySegments(mp4 string, segments []util.Segment) error {
+	// 补零宽度由分段总数决定：不超过99补一位（两位宽度），超过99但不超过999补两位（三位宽度）
+	width := 2
+	if len(segments) > 99 {
+		width = 3
+	}
 	for i, segment := range segments {
-		// 将 i+1 转换为两位数的字符串，不足两位前面补0
-		index := fmt.Sprintf("%02d", i+1)
-		total := fmt.Sprintf("%02d", len(segments))
+		// 按统一宽度补零，例如总数99时为 01、02，总数超过99时为 001、002
+		index := fmt.Sprintf("%0*d", width, i+1)
+		total := fmt.Sprintf("%0*d", width, len(segments))
 		// 构造输出文件名，格式为 "01.mp4"
 		start := util.FormatSecondToHMS(segment.Start)
 		end := util.FormatSecondToHMS(segment.End)
