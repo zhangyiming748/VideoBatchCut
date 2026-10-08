@@ -145,7 +145,7 @@ func runProbe(cmd *exec.Cmd) bool {
 	cmd.Stderr = &stderr
 
 	if err := cmd.Start(); err != nil {
-		log.Printf("[probe] 硬件编码器 %s 无法启动: %v", probeEncoderName(cmd), err)
+		log.Printf("[probe] 探测 %s 时进程无法启动（继续尝试其它编码器）: %v", probeEncoderName(cmd), err)
 		return false
 	}
 	done := make(chan error, 1)
@@ -154,7 +154,7 @@ func runProbe(cmd *exec.Cmd) bool {
 	case <-ctx.Done():
 		// 超时：杀掉进程并返回 false，同时说明是超时（多为驱动异常卡死）。
 		_ = cmd.Process.Kill()
-		log.Printf("[probe] 硬件编码器 %s 在 %s 内无响应，判定不可用", probeEncoderName(cmd), probeTimeout)
+		log.Printf("[probe] 探测 %s 时在 %s 内无响应（继续尝试其它编码器）", probeEncoderName(cmd), probeTimeout)
 		return false
 	case err := <-done:
 		if err != nil {
@@ -162,7 +162,7 @@ func runProbe(cmd *exec.Cmd) bool {
 			if reason == "" {
 				reason = err.Error()
 			}
-			log.Printf("[probe] 硬件编码器 %s 不可用，原因: %s", probeEncoderName(cmd), reason)
+			log.Printf("[probe] 探测 %s 不可用（继续尝试其它编码器），原因: %s", probeEncoderName(cmd), reason)
 			return false
 		}
 		return true
