@@ -12,9 +12,12 @@
 package util
 
 import (
+	"bytes"
 	"context"
+	"log"
 	"os/exec"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 )
@@ -129,23 +132,51 @@ func HasQualcomm() bool {
 
 // runProbe 带超时地执行一次 ffmpeg 探测命令，退出码为 0 才返回 true。
 // 超时（驱动异常导致 ffmpeg 卡死）同样返回 false，避免拖垮整批任务。
+//
+// 失败时会把“为什么不行”一并打到日志：从命令参数提取编码器名，并附上 ffmpeg 的
+// stderr（真正的失败原因，如设备不可用 / 驱动缺失 / 参数不支持）。由于每种编码器
+// 整批只探测一次（probeCache），这段原因最多出现一次，不会刷屏。
 func runProbe(cmd *exec.Cmd) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
 	defer cancel()
-	// Stdout/Stderr 均为 nil 时 Go 会把 ffmpeg 输出接到 /dev/null，探测过程不污染批处理日志
+
+	// 捕获 ffmpeg 的 stderr：探测失败时它就是“为什么不行”的具体原因。
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
 	if err := cmd.Start(); err != nil {
+		log.Printf("[probe] 硬件编码器 %s 无法启动: %v", probeEncoderName(cmd), err)
 		return false
 	}
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 	select {
 	case <-ctx.Done():
-		// 超时：杀掉进程并返回 false
+		// 超时：杀掉进程并返回 false，同时说明是超时（多为驱动异常卡死）。
 		_ = cmd.Process.Kill()
+		log.Printf("[probe] 硬件编码器 %s 在 %s 内无响应，判定不可用", probeEncoderName(cmd), probeTimeout)
 		return false
 	case err := <-done:
-		return err == nil
+		if err != nil {
+			reason := strings.TrimSpace(stderr.String())
+			if reason == "" {
+				reason = err.Error()
+			}
+			log.Printf("[probe] 硬件编码器 %s 不可用，原因: %s", probeEncoderName(cmd), reason)
+			return false
+		}
+		return true
 	}
+}
+
+// probeEncoderName 从探测命令的参数中提取编码器名（-c:v 后面那个值），用于失败日志。
+func probeEncoderName(cmd *exec.Cmd) string {
+	for i, a := range cmd.Args {
+		if a == "-c:v" && i+1 < len(cmd.Args) {
+			return cmd.Args[i+1]
+		}
+	}
+	return "unknown"
 }
 
 // probeNvenc 用一段合成源跑一次真实的 h264_nvenc 最小编码，退出码为 0 才认为 NVENC 可用。

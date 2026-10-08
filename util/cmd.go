@@ -3,11 +3,45 @@ package util
 
 import (
 	"bufio"
+	"fmt"
 	"io"
 	"log"
 	"os/exec"
 	"strings"
 )
+
+// ExitError 表示外部命令以非零状态退出（或运行失败），并携带其 stderr 输出。
+//
+// 存在意义：exec.Cmd.Run/Wait 默认返回的 *exec.ExitError 只含 "exit status 1"，
+// 而 ffmpeg 真正的失败原因（编码器打开失败、设备不可用、参数不支持等）全部打印在
+// stderr 上。若直接把 exit error 往上抛，上层只能看到“硬件编码器失败”却不知道为什么。
+// 故用本类型把 stderr 固化进 error，使其沿调用链返回时始终带着详细原因，
+// 调用方也可用 errors.As 取出原始 stderr 做进一步判断。
+type ExitError struct {
+	Name   string // 命令名（如 "ffmpeg"）
+	Err    error  // 底层错误（通常是 *exec.ExitError）
+	Output string // 捕获到的 stderr 全文
+}
+
+func (e *ExitError) Error() string {
+	output := strings.TrimSpace(e.Output)
+	if output == "" {
+		return fmt.Sprintf("%s: %v", e.Name, e.Err)
+	}
+	return fmt.Sprintf("%s: %v, stderr:\n%s", e.Name, e.Err, output)
+}
+
+// Unwrap 暴露底层错误，支持 errors.Is / errors.As（如取回 *exec.ExitError 的退出码）。
+func (e *ExitError) Unwrap() error { return e.Err }
+
+// newExitError 把命令失败与捕获到的 stderr 包装成 *ExitError。
+func newExitError(cmd *exec.Cmd, err error, stderr string) *ExitError {
+	name := "command"
+	if len(cmd.Args) > 0 {
+		name = cmd.Args[0]
+	}
+	return &ExitError{Name: name, Err: err, Output: stderr}
+}
 
 // Exec 执行外部命令，流式处理输出。
 //
@@ -37,14 +71,16 @@ func Exec(cmd *exec.Cmd) error {
 		}
 		parseProgress(stdoutPipe)
 		if err := cmd.Wait(); err != nil {
-			log.Printf("[exec] 命令失败: %v\n%s", err, stderrBuf.String())
-			return err
+			exitErr := newExitError(cmd, err, stderrBuf.String())
+			log.Printf("[exec] 命令失败: %v", exitErr)
+			return exitErr
 		}
 	} else {
 		// 无进度输出：直接运行，stderr 已被缓冲区捕获。
 		if err := cmd.Run(); err != nil {
-			log.Printf("[exec] 命令失败: %v\n%s", err, stderrBuf.String())
-			return err
+			exitErr := newExitError(cmd, err, stderrBuf.String())
+			log.Printf("[exec] 命令失败: %v", exitErr)
+			return exitErr
 		}
 	}
 

@@ -630,7 +630,7 @@ func (j *Job) Run() error {
 	log.Printf("[ffmpeg] 选用视频编码器: %s", enc)
 	if err := Exec(j.Command()); err != nil {
 		if isHardwareEncoder(enc) {
-			log.Printf("[ffmpeg] 硬件编码器 %s 失败，回退到 CPU (libx265) 重试: %v", enc, err)
+			log.Printf("[ffmpeg] 硬件编码器 %s 失败，回退到 CPU (libx265) 重试；失败原因: %v", enc, err)
 			backup := *j
 			backup.Encoder = EncoderX265
 			if err2 := Exec(backup.Command()); err2 != nil {
