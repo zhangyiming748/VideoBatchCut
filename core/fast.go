@@ -49,6 +49,13 @@ func Mirror(root string) {
 		if strings.Contains(filepath.Base(video), "_mirror") {
 			continue
 		}
+		// 先用 MediaInfo 判断视频编码：已是 AVC 或 HEVC 的直接跳过，
+		// 不再重新创建一个编码相同的镜像文件
+		mi := FastMediaInfo.GetStandMediaInfo(video)
+		if mi.Video.Format == "AVC" || mi.Video.Format == "HEVC" {
+			log.Printf("文件%s已是%s编码，跳过镜像创建\n", video, mi.Video.Format)
+			continue
+		}
 		outName := strings.TrimSuffix(video, filepath.Ext(video)) + "_mirror.mp4"
 		// 已存在镜像文件时跳过，避免重复转换
 		if _, err := os.Stat(outName); err == nil {
