@@ -107,8 +107,7 @@ func parseProgress(r io.Reader) {
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for scanner.Scan() {
 		line := scanner.Text()
-		if strings.HasPrefix(line, "out_time=") {
-			t := strings.TrimPrefix(line, "out_time=")
+		if t, ok := strings.CutPrefix(line, "out_time="); ok {
 			// 去掉微秒部分的精度，只保留到毫秒，日志更干净
 			if dot := strings.Index(t, "."); dot > 0 && len(t) > dot+4 {
 				t = t[:dot+4]
@@ -117,5 +116,9 @@ func parseProgress(r io.Reader) {
 		} else if line == "progress=end" {
 			break
 		}
+	}
+	// 循环结束后检查读取错误，避免进度流中途出错被静默忽略。
+	if err := scanner.Err(); err != nil {
+		log.Printf("[exec] 读取进度输出失败: %v", err)
 	}
 }

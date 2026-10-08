@@ -1,4 +1,6 @@
-// 提供无损切割相关的工具函数
+// 提供视频片段（Segment）的定义、解析与时间格式转换工具。
+// 包括：proj.llc 工程文件的片段解析、秒数与 HH:MM:SS.mmm 互转等，
+// 供 ffmpeg 包 CutBySegments 及 core.Cut 使用。
 package util
 
 import (
@@ -10,12 +12,6 @@ import (
 	"strconv"
 	"strings"
 )
-
-func UseProjLLCFile(llcFile string) []string {
-	seconds, _ := extractStartsFromTextFile(llcFile)
-	timestamps := SecondToHMS(seconds)
-	return timestamps
-}
 
 // 搜索目标文件夹是否包含后缀为proj.llc的文件
 func FindProjLLCFile(folderPath string) (string, bool) {
@@ -38,40 +34,6 @@ func FindProjLLCFile(folderPath string) (string, bool) {
 		return projLLCFile, true
 	}
 	return "", false
-}
-
-// 提取start后边的秒数
-func extractStartsFromTextFile(filePath string) ([]float64, error) {
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		return nil, err
-	}
-	lines := strings.Split(string(data), "\n")
-	var startValues []float64
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "start:") {
-			line = strings.Replace(line, ",", "", 1)
-			parts := strings.Split(line, ":")
-			if len(parts) > 1 {
-				valueStr := strings.TrimSpace(parts[1])
-				value, err := strconv.ParseFloat(valueStr, 64)
-				if err != nil {
-					return nil, err
-				}
-				startValues = append(startValues, value)
-			}
-		}
-	}
-	return startValues, nil
-}
-
-func SecondToHMS(currentTime []float64) []string {
-	var timestamps []string
-	for _, second := range currentTime {
-		timestamps = append(timestamps, FormatSecondToHMS(second))
-	}
-	return timestamps
 }
 
 // Segment 定义视频片段的结构
