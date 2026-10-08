@@ -210,25 +210,21 @@ func probeNvenc() bool {
 }
 
 // probeQsv 用合成源跑一次真实的 h264_qsv 最小编码，退出码为 0 才认为 QSV 可用。
-// 能挡掉驱动缺失、或 iGPU 不支持本分支较新参数（mbbrc / rdo / look_ahead）而运行期报错的情况。
 //
-// 探测刻意不带 -hwaccel qsv / -hwaccel_output_format qsv：那是“硬件解码”输入选项，nullsrc 合成源无需解码；
-// 这里只验证“编码”能力，也正是编码参数不兼容会失败的地方。参数需与 ffmpeg 包 QSV 分支保持一致。
+// 为什么刻意只用最小参数（global_quality + profile），不再加 look_ahead / extbrc /
+// mbbrc / rdo / bf / preset=veryslow：实测在只有 Intel 核显、QSV 本可正常工作的机器上，
+// 这组激进选项一起下发会让编码器初始化失败（它们在不同驱动/ffmpeg 版本上互相挑剔），
+// 探测因此误判“QSV 不可用”，整批错误地回退到 CPU。最小参数实测可正常出片，
+// 且兼容性最好；探测的目标是“QSV 到底能不能用”，不应被高级调优选项误伤。
+//
+// 探测刻意不带 -hwaccel qsv / -hwaccel_output_format qsv：那是“硬件解码”输入选项，
+// nullsrc 合成源无需解码；这里只验证“编码”能力。参数需与 ffmpeg.go QSV 分支保持一致。
 func probeQsv() bool {
 	probe := exec.Command("ffmpeg",
 		"-hide_banner",
 		"-f", "lavfi", "-i", "nullsrc=s=256x256:d=1",
 		"-c:v", "h264_qsv",
-		"-preset", "veryslow",
 		"-global_quality:v", "18",
-		"-look_ahead", "1",
-		"-look_ahead_depth", "40",
-		"-extbrc", "1",
-		"-mbbrc", "1",
-		"-rdo", "1",
-		"-adaptive_i", "1",
-		"-adaptive_b", "1",
-		"-bf", "4",
 		"-profile:v", "high",
 		"-f", "null", "-",
 	)

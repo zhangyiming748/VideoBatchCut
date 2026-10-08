@@ -155,22 +155,16 @@ func videoEncoderArgs(e Encoder) []string {
 			"-allow_sw", "1",
 		}
 	case EncoderIntel:
-		// 与 hwaccel.go probeQsv 一致。
+		// 与 hwaccel.go probeQsv 一致：刻意只用高兼容的最小参数。
+		// 实测 look_ahead / extbrc / mbbrc / rdo / bf / preset=veryslow 一起下发时，
+		// 会在部分 Intel 核显驱动上让编码器初始化失败（即便 QSV 本身可用），
+		// 导致探测误判并回退 CPU，故移除这些激进调优选项。
 		// ⚠️ -global_quality 必须带 :v 后缀：它是 AVCodecContext 通用选项，不加后缀会同时
 		// 套到音频流上，使 libopus 进入 quality-based 模式并与 -b:a 冲突，直接报
 		// “Quality-based encoding not supported” 打开编码器失败。
 		return []string{
 			"-c:v", "h264_qsv",
-			"-preset", "veryslow",
 			"-global_quality:v", "18",
-			"-look_ahead", "1",
-			"-look_ahead_depth", "40",
-			"-extbrc", "1",
-			"-mbbrc", "1",
-			"-rdo", "1",
-			"-adaptive_i", "1",
-			"-adaptive_b", "1",
-			"-bf", "4",
 			"-profile:v", "high",
 		}
 	case EncoderAMD:
@@ -249,8 +243,11 @@ func inputHwaccelArgs(e Encoder) []string {
 	case EncoderNvidia:
 		return []string{"-hwaccel", "cuda"}
 	case EncoderIntel:
-		// QSV 硬解需同时把输出指定为 qsv surface，供 h264_qsv 编码零拷贝消费
-		return []string{"-hwaccel", "qsv", "-hwaccel_output_format", "qsv"}
+		// 默认走软解、不追加 QSV 硬解参数。原因：-hwaccel qsv -hwaccel_output_format qsv
+		// 这条全硬链路在精确切割 / 多音轨 / filter_complex 等场景兼容性差，实测会在
+		// “QSV 编码本身可用”的机器上导致整条命令失败。软解 + h264_qsv 硬编已验证稳定，
+		// 也与 probeQsv 探测的配置保持一致。如需硬解可在 Job.PreInputArgs 手动追加。
+		return nil
 	case EncoderQualcomm:
 		// Windows ARM64 高通平台：Media Foundation 硬件编码器必须吃 d3d11 显存帧。
 		// -hwaccel_output_format d3d11 让解码帧留在 GPU（NV12），编码端零拷贝；
