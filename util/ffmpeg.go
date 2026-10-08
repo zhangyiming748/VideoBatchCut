@@ -248,27 +248,27 @@ func fastVideoEncoderArgs(e Encoder) []string {
 		return []string{
 			"-c:v", "h264_nvenc",
 			"-preset", "p1",
-			"-profile:v", "high",
+			"-profile:v", "baseline",
 		}
 	case EncoderIntel:
 		// QSV：veryfast 档，仅保留最基础选项，避免高级参数拖慢或初始化失败。
 		return []string{
 			"-c:v", "h264_qsv",
 			"-preset", "veryfast",
-			"-profile:v", "high",
+			"-profile:v", "baseline",
 		}
 	case EncoderAMD:
 		// AMF：低延迟优先、关闭 preanalysis/vbaq 等耗时分析。
 		return []string{
 			"-c:v", "h264_amf",
 			"-usage", "lowlatency",
-			"-profile", "high",
+			"-profile", "baseline",
 		}
 	case EncoderApple:
 		// VideoToolbox：q:v 数值越低越快（画质越低），取较低档；allow_sw 兜底。
 		return []string{
 			"-c:v", "h264_videotoolbox",
-			"-profile:v", "high",
+			"-profile:v", "baseline",
 			"-q:v", "30",
 			"-allow_sw", "1",
 		}
@@ -277,7 +277,7 @@ func fastVideoEncoderArgs(e Encoder) []string {
 		return []string{
 			"-c:v", "h264_mf",
 			"-hw_encoding", "1",
-			"-profile:v", "100",
+			"-profile:v", "66",
 			"-bf", "0",
 		}
 	case EncoderX264:
@@ -285,7 +285,7 @@ func fastVideoEncoderArgs(e Encoder) []string {
 		return []string{
 			"-c:v", "libx264",
 			"-preset", "ultrafast",
-			"-profile:v", "high",
+			"-profile:v", "baseline",
 			"-pix_fmt", "yuv420p",
 		}
 	case EncoderX265:
