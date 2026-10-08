@@ -237,6 +237,70 @@ func videoEncoderArgs(e Encoder) []string {
 	}
 }
 
+// fastVideoEncoderArgs 返回某个编码器“速度优先”的视频参数，仅在 Job.Fastest=true 时使用。
+// 与 videoEncoderArgs 的区别：取向是“越快越好”，统一选最快 preset、去掉一切高级调优/分析
+// 选项（look_ahead / preanalysis / AQ / 多 B 帧等），画质与体积不做要求。
+// 只对 mirror 这类“打点用镜像”生效，不影响追求画质的其它子命令。
+func fastVideoEncoderArgs(e Encoder) []string {
+	switch e {
+	case EncoderNvidia:
+		// NVENC：p1=最快（旧 ffmpeg 写作 fastest，新版为 p1），硬件编码本身已很快。
+		return []string{
+			"-c:v", "h264_nvenc",
+			"-preset", "p1",
+			"-profile:v", "high",
+		}
+	case EncoderIntel:
+		// QSV：veryfast 档，仅保留最基础选项，避免高级参数拖慢或初始化失败。
+		return []string{
+			"-c:v", "h264_qsv",
+			"-preset", "veryfast",
+			"-profile:v", "high",
+		}
+	case EncoderAMD:
+		// AMF：低延迟优先、关闭 preanalysis/vbaq 等耗时分析。
+		return []string{
+			"-c:v", "h264_amf",
+			"-usage", "lowlatency",
+			"-profile", "high",
+		}
+	case EncoderApple:
+		// VideoToolbox：q:v 数值越低越快（画质越低），取较低档；allow_sw 兜底。
+		return []string{
+			"-c:v", "h264_videotoolbox",
+			"-profile:v", "high",
+			"-q:v", "30",
+			"-allow_sw", "1",
+		}
+	case EncoderQualcomm:
+		// h264_mf：硬编码本身够快，去掉多参考帧/B帧等额外开销。
+		return []string{
+			"-c:v", "h264_mf",
+			"-hw_encoding", "1",
+			"-profile:v", "100",
+			"-bf", "0",
+		}
+	case EncoderX264:
+		// CPU 快速档：ultrafast 是 libx264 最快 preset。
+		return []string{
+			"-c:v", "libx264",
+			"-preset", "ultrafast",
+			"-profile:v", "high",
+			"-pix_fmt", "yuv420p",
+		}
+	case EncoderX265:
+		// 极速档下 CPU 回退也走 x264（比 x265 快），由 Run 保证；此处兜底给最快 x265。
+		return []string{
+			"-c:v", "libx265",
+			"-preset", "ultrafast",
+			"-pix_fmt", "yuv420p",
+		}
+	default:
+		// EncoderCopy / EncoderNone / 未解析：交由 ffmpeg 默认。
+		return videoEncoderArgs(e)
+	}
+}
+
 // inputHwaccelArgs 返回输入端（-i 之前）的硬件解码参数；仅对支持且开启 HwDecode 的编码器生效。
 func inputHwaccelArgs(e Encoder) []string {
 	switch e {
@@ -454,6 +518,15 @@ type Job struct {
 	Progress  bool // -progress pipe:1，把机器可读进度输出到 stdout
 	Overwrite bool // -y，覆盖已存在的输出文件
 
+	// Fastest 为“极速档”：只追求转换速度，不保证画质、也不需要音频，
+	// 专供 mirror 这类“打点用镜像”场景。开启后：
+	//   - 视频改用 fastVideoEncoderArgs 的速度优先参数（最快 preset）；
+	//   - 音频丢弃（-an，见 EnableFastest 里设置的 AudioNone）；
+	//   - 只映射视频流（-map 0:v:0），字幕/数据流/音频全部不处理，进一步提速；
+	//   - 硬件失败回退 CPU 时也用最快的 libx264 ultrafast，而非高质量 libx265。
+	// 默认 false，其它子命令不受任何影响。
+	Fastest bool
+
 	// MapAllStreams 为 true（NewJob 默认）时自动添加流映射，把输入的所有视频/音频/字幕/数据流
 	// 全部保留到输出（不加时退回 ffmpeg 默认的“每类挑一条”行为，字幕会被整体丢弃），
 	// 并按输出容器自动指定字幕编码（MP4→mov_text、MKV→srt）。
@@ -507,6 +580,24 @@ func (j *Job) EnableTimestampFixes() *Job {
 	return j
 }
 
+// EnableFastest 打开“极速档”，专供 mirror 等只看速度、不需要画质和音频的场景。
+// 它只改本 Job，不触碰任何默认参数函数，因此不影响其它子命令。具体动作：
+//   - Fastest=true：视频走 fastVideoEncoderArgs；
+//   - Audio=AudioNone()：产出 -an，丢弃音频；
+//   - 手写 PostInputArgs 的 -map 0:v:0：只保留视频流（Args 检测到 -map 会自动让位，
+//     不再做全流映射 / 字幕编码 / 多音轨滤镜等额外工作）；
+//   - 关闭硬解：极速档软解 + 硬编最稳，避免硬解链路拖慢或失败。
+//
+// 返回自身以支持链式调用。
+func (j *Job) EnableFastest() *Job {
+	j.Fastest = true
+	j.Audio = AudioNone()
+	// 仅映射第一条视频流；hasMapFlag 识别后会跳过自动全流映射与字幕处理。
+	j.PostInputArgs = append(j.PostInputArgs, "-map", "0:v:0")
+	j.HwDecode = false
+	return j
+}
+
 // ResolvedEncoder 返回本任务实际会使用的编码器（把 Auto 解析掉），便于日志/判断。
 func (j *Job) ResolvedEncoder() Encoder { return resolveEncoder(j.Encoder) }
 
@@ -552,8 +643,12 @@ func (j *Job) Args() []string {
 		args = append(args, allStreamMaps(j.Output)...)
 	}
 
-	// 视频编码参数（按硬件自动决定的单一事实来源）
-	args = append(args, videoEncoderArgs(enc)...)
+	// 视频编码参数：极速档走速度优先参数，否则走默认的画质参数。
+	if j.Fastest {
+		args = append(args, fastVideoEncoderArgs(enc)...)
+	} else {
+		args = append(args, videoEncoderArgs(enc)...)
+	}
 
 	// 音频编码参数
 	args = append(args, j.Audio.args()...)
@@ -627,9 +722,16 @@ func (j *Job) Run() error {
 	log.Printf("[ffmpeg] 选用视频编码器: %s", enc)
 	if err := Exec(j.Command()); err != nil {
 		if isHardwareEncoder(enc) {
-			log.Printf("[ffmpeg] 硬件编码器 %s 失败，回退到 CPU (libx265) 重试；失败原因: %v", enc, err)
 			backup := *j
-			backup.Encoder = EncoderX265
+			// 极速档回退到最快的 libx264（Fastest 仍为 true，会走 ultrafast）；
+			// 正常画质档回退到高质量 libx265。
+			if j.Fastest {
+				log.Printf("[ffmpeg] 硬件编码器 %s 失败，极速档回退到 CPU (libx264 ultrafast) 重试；失败原因: %v", enc, err)
+				backup.Encoder = EncoderX264
+			} else {
+				log.Printf("[ffmpeg] 硬件编码器 %s 失败，回退到 CPU (libx265) 重试；失败原因: %v", enc, err)
+				backup.Encoder = EncoderX265
+			}
 			if err2 := Exec(backup.Command()); err2 != nil {
 				return fmt.Errorf("硬件编码 %s 失败(%v)，CPU 回退也失败: %w", enc, err, err2)
 			}

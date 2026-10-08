@@ -9,7 +9,12 @@ import (
 	"github.com/zhangyiming748/finder"
 )
 
-func FastMP4(root string) {
+/*
+DJI录制的视频专用
+找到mp4视频
+使用ffmpeg替换音轨为指定的mp3文件循环播放直到视频结束
+*/
+func DJI(root, audioPath string) {
 	folders := finder.FindAllFolders(root)
 	for _, folder := range folders {
 		videos := finder.FindAllVideosInRoot(folder)
@@ -23,9 +28,7 @@ func FastMP4(root string) {
 					continue
 				}
 			}
-			if err := ffmpeg.AnyVideoToMP4(video); err != nil {
-				// 失败（含字幕不兼容被跳过）只打印错误，不退出，继续处理下一个
-				log.Printf("转换文件%s失败，跳过:%v\n", video, err)
+			if err := ffmpeg.ForDji(video, audioPath); err != nil {
 				continue
 			}
 		}
