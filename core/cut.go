@@ -54,6 +54,16 @@ func Cut(root string) {
 		if err = ffmpeg.CutBySegments(mp4, segments); err != nil {
 			log.Printf("%v\n", err)
 		} else {
+			// 切割前文件夹里只有 1 个视频，切割成功后必然多出多个片段文件。
+			// 通过切割后视频数量是否严格增加来判断是否真的切出了片段，
+			// 避免 ffmpeg 静默失败（退出码 0 但未生成产物）时误删原文件。
+			// 注：finder.FindAllVideosInRoot 通过文件头识别视频，空文件/损坏文件不会被计入，
+			// 因此能同时过滤"片段没生成"和"片段是空文件"两种失败情况。
+			afterVideos := finder.FindAllVideosInRoot(folder)
+			if len(afterVideos) <= len(videos) {
+				log.Printf("警告: 切割 %s 后文件夹内视频数量未增加（切割前:%d 切割后:%d），片段可能未生成，保留原文件\n", mp4, len(videos), len(afterVideos))
+				continue
+			}
 			if err := os.RemoveAll(mp4); err != nil {
 				log.Printf("删除%v失败\t%v\n", mp4, err)
 			}
