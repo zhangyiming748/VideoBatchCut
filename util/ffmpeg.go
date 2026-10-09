@@ -435,12 +435,19 @@ func audioStreamCount(input string) int {
 	return n
 }
 
-// allStreamMaps 返回“保留全部流”的映射参数：视频/音频/字幕/数据流逐类映射，
-// "?" 保证输入没有该类流时不报错；附件流（字体等）仅 MKV 目标容器支持。
+// allStreamMaps 返回“保留全部流”的映射参数：视频/音频/字幕逐类映射，
+// "?" 保证输入没有该类流时不报错。
+//
+// 数据流（0:d）仅在 MKV 输出时映射：MP4 容器无法封装未知编码的数据流
+// （常见于手机拍摄的 MP4，codec_tag 为 mp4s、codec_name 为 unknown），
+// 强制 copy 会触发 "Tag mp4s incompatible with output codec id '0'" 导致写头失败。
+// 数据流通常是章节/时间轴元数据，切割片段时不需要，故 MP4 等容器直接丢弃。
+// 附件流（0:t，字体等）也仅 MKV 支持。
 func allStreamMaps(output string) []string {
-	maps := []string{"-map", "0:v?", "-map", "0:a?", "-map", "0:s?", "-map", "0:d?"}
-	if strings.EqualFold(filepath.Ext(output), ".mkv") {
-		maps = append(maps, "-map", "0:t?")
+	ext := strings.ToLower(filepath.Ext(output))
+	maps := []string{"-map", "0:v?", "-map", "0:a?", "-map", "0:s?"}
+	if ext == ".mkv" {
+		maps = append(maps, "-map", "0:d?", "-map", "0:t?")
 	}
 	return maps
 }
@@ -674,9 +681,10 @@ func (j *Job) Args() []string {
 	if useFilterComplex {
 		// 多音轨：每条音轨分别挂滤镜，音频映射由 filter_complex 分支给出
 		args = append(args, audioFilterComplexArgs(j.AudioFilter, nAudio)...)
-		args = append(args, "-map", "0:v?", "-map", "0:s?", "-map", "0:d?")
+		// 数据流（0:d）仅 MKV 支持，MP4 等容器丢弃，原因见 allStreamMaps 注释
+		args = append(args, "-map", "0:v?", "-map", "0:s?")
 		if strings.EqualFold(filepath.Ext(j.Output), ".mkv") {
-			args = append(args, "-map", "0:t?")
+			args = append(args, "-map", "0:d?", "-map", "0:t?")
 		}
 	} else if j.AudioFilter != "" {
 		args = append(args, "-af", j.AudioFilter)
