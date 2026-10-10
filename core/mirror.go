@@ -20,10 +20,37 @@ import (
 // 自动选择硬件加速（NVIDIA / Apple / Intel / AMD / Qualcomm），失败时极速回退 CPU。
 func Mirror(root string) {
 	videos := finder.FindAllVideos(root)
+	// llcChecked 缓存每个目录是否存在 -proj.llc 打点工程文件，
+	// 同一目录下可能有多个视频，只 ReadDir 一次。
+	llcChecked := make(map[string]bool)
+	hasProjLLC := func(dir string) bool {
+		if found, ok := llcChecked[dir]; ok {
+			return found
+		}
+		found := false
+		entries, err := os.ReadDir(dir)
+		if err == nil {
+			for _, e := range entries {
+				if !e.IsDir() && strings.HasSuffix(strings.ToLower(e.Name()), "-proj.llc") {
+					found = true
+					break
+				}
+			}
+		}
+		llcChecked[dir] = found
+		return found
+	}
 	for _, video := range videos {
 		// 跳过镜像文件自身（严格以 _mirror.mp4 结尾，大小写不敏感），
 		// 避免重复执行时把镜像当作原文件再套娃一层。
 		if strings.HasSuffix(strings.ToLower(filepath.Base(video)), "_mirror.mp4") {
+			continue
+		}
+		// 同目录存在 -proj.llc 打点工程文件，说明该视频已生成过镜像并完成打点，
+		// 用户随后删掉了镜像只保留原视频，此时整个文件夹的视频都不再处理。
+		dir := filepath.Dir(video)
+		if hasProjLLC(dir) {
+			log.Printf("目录%s存在打点工程文件，视为已处理，跳过视频%s\n", dir, video)
 			continue
 		}
 		outName := strings.TrimSuffix(video, filepath.Ext(video)) + "_mirror.mp4"
