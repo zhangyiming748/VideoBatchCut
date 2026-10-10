@@ -21,21 +21,23 @@ import (
 func Mirror(root string) {
 	videos := finder.FindAllVideos(root)
 	for _, video := range videos {
-		// 跳过已带 _mirror 后缀的文件，避免重复执行时套娃
-		if strings.Contains(filepath.Base(video), "_mirror") {
-			continue
-		}
-		// 先用 MediaInfo 判断视频编码：已是 AVC 或 HEVC 的直接跳过，
-		// 不再重新创建一个编码相同的镜像文件
-		mi := FastMediaInfo.GetStandMediaInfo(video)
-		if mi.Video.Format == "AVC" || mi.Video.Format == "HEVC" {
-			log.Printf("文件%s已是%s编码，跳过镜像创建\n", video, mi.Video.Format)
+		// 跳过镜像文件自身（严格以 _mirror.mp4 结尾，大小写不敏感），
+		// 避免重复执行时把镜像当作原文件再套娃一层。
+		if strings.HasSuffix(strings.ToLower(filepath.Base(video)), "_mirror.mp4") {
 			continue
 		}
 		outName := strings.TrimSuffix(video, filepath.Ext(video)) + "_mirror.mp4"
-		// 已存在镜像文件时跳过，避免重复转换
+		// 同级目录已存在对应的镜像文件，说明该原文件已处理完成，原文件与镜像一并跳过，
+		// 不再重新转换（也避免对已处理文件做无谓的 MediaInfo 探测）。
 		if _, err := os.Stat(outName); err == nil {
-			log.Printf("镜像文件%s已存在，跳过\n", outName)
+			log.Printf("镜像文件%s已存在，跳过原文件%s\n", outName, video)
+			continue
+		}
+		// 再用 MediaInfo 判断视频编码：已是 AVC 或 HEVC 的直接跳过，
+		// 不重新创建一个编码相同的镜像文件
+		mi := FastMediaInfo.GetStandMediaInfo(video)
+		if mi.Video.Format == "AVC" || mi.Video.Format == "HEVC" {
+			log.Printf("文件%s已是%s编码，跳过镜像创建\n", video, mi.Video.Format)
 			continue
 		}
 		// 极速档：速度优先、丢弃音频(-an)、只映射视频流，不做字幕预检/处理。
