@@ -40,6 +40,15 @@ func Mirror(root string) {
 		}
 		// 极速档：速度优先、丢弃音频(-an)、只映射视频流，不做字幕预检/处理。
 		job := util.NewJob(video, outName).EnableFastest()
+		// 时间轴保真：镜像用于在其它软件中打点，而实际切割作用在原文件上。
+		// 必须让镜像每一帧的 PTS 与原文件解码时间轴严格一一对应：
+		//   - PassthroughFps(-fps_mode passthrough)：不丢帧、不补帧，
+		//     默认 auto 模式会丢弃时间戳缺失/重复帧并可能把 VFR 源压成 CFR，
+		//     实测会造成片头数帧丢失、start_time 偏移约 100ms；
+		//   - CopyTimestamps(-copyts)：直接沿用原文件时间戳，不重新生成。
+		// 否则镜像上标记的时间点与切割命令按原文件 PTS 定位的画面会发生偏移。
+		job.PassthroughFps = true
+		job.CopyTimestamps = true
 		log.Printf("执行命令:%v\n", job.String())
 		if err := job.Run(); err != nil {
 			// 失败也继续处理下一个，原文件保持不动
