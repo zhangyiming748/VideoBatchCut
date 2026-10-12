@@ -93,11 +93,16 @@ func main() {
 				return
 			}
 			fmt.Printf("开始执行镜像 MP4 任务...\n根目录：%s\n", dir)
-			core.Mirror(dir)
+			force, _ := cmd.Flags().GetBool("force")
+			if force {
+				fmt.Println("已启用强制模式：跳过 AVC/HEVC 编码检测，所有视频都重新生成镜像")
+			}
+			core.Mirror(dir, force)
 		},
 	}
 	// 为 mirror 命令添加标志
 	mirrorCmd.Flags().StringP("dir", "d", "./", "根目录路径 (必需)")
+	mirrorCmd.Flags().BoolP("force", "f", false, "强制重新生成镜像，即使视频已是 AVC/HEVC 编码")
 
 	// 添加fix命令
 	var fixCmd = &cobra.Command{

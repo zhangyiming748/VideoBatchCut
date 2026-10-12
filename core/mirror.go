@@ -18,7 +18,9 @@ import (
 // （EnableFastest）——只追求转换速度，不保证画质，也不保留音频（-an）、不处理字幕，
 // 只映射视频流。全程不修改、不删除、不重命名原文件。编码器仍由 util.SelectEncoder
 // 自动选择硬件加速（NVIDIA / Apple / Intel / AMD / Qualcomm），失败时极速回退 CPU。
-func Mirror(root string) {
+// force 为 true 时（-f/--force），跳过 AVC/HEVC 编码检测，无论原视频是什么编码
+// 都重新生成镜像；默认 false，保持跳过 AVC/HEVC 的行为。
+func Mirror(root string, force bool) {
 	videos := finder.FindAllVideos(root)
 	// llcChecked 缓存每个目录是否存在 -proj.llc 打点工程文件，
 	// 同一目录下可能有多个视频，只 ReadDir 一次。
@@ -61,11 +63,14 @@ func Mirror(root string) {
 			continue
 		}
 		// 再用 MediaInfo 判断视频编码：已是 AVC 或 HEVC 的直接跳过，
-		// 不重新创建一个编码相同的镜像文件
-		mi := FastMediaInfo.GetStandMediaInfo(video)
-		if mi.Video.Format == "AVC" || mi.Video.Format == "HEVC" {
-			log.Printf("文件%s已是%s编码，跳过镜像创建\n", video, mi.Video.Format)
-			continue
+		// 不重新创建一个编码相同的镜像文件；force 模式下跳过该检测，
+		// 无论什么编码都重新生成镜像。
+		if !force {
+			mi := FastMediaInfo.GetStandMediaInfo(video)
+			if mi.Video.Format == "AVC" || mi.Video.Format == "HEVC" {
+				log.Printf("文件%s已是%s编码，跳过镜像创建\n", video, mi.Video.Format)
+				continue
+			}
 		}
 		// 极速档：速度优先、丢弃音频(-an)、只映射视频流，不做字幕预检/处理。
 		job := util.NewJob(video, outName).EnableFastest()
