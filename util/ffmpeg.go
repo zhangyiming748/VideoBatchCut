@@ -504,9 +504,11 @@ type Job struct {
 	// Encoder 为 EncoderAuto（默认）时由 SelectEncoder 按硬件自动决定；也可强制指定。
 	Encoder Encoder
 
-	// 切割范围（输出端精确切割，等价旧代码把 -ss/-to 放在 -i 之后）。留空表示该端不限制。
-	Start string // -ss
-	End   string // -to
+	// 切割范围：-ss 放在 -i 之前（输入端 seek，重编码下帧精确且快），
+	// -to 放在 -i 之后（输出端，对照 -copyts 保留的原始时间戳结束切割）。
+	// 留空表示该端不限制。
+	Start string // -ss（输入端）
+	End   string // -to（输出端）
 
 	// 音频编码规格，NewJob 默认高质量 Opus（见 AudioOpus）。
 	Audio Audio
@@ -627,13 +629,18 @@ func (j *Job) Args() []string {
 	if j.HwDecode {
 		args = append(args, inputHwaccelArgs(enc)...)
 	}
-	args = append(args, "-i", j.Input)
-	args = append(args, j.PostInputArgs...)
-
-	// 切割区间（输出端精确切割）
+	// 输入端 seek：-ss 放在 -i 之前，先跳到起始点附近的关键帧再解码，
+	// 配合默认开启的 accurate_seek 解码并丢弃 seek 点到目标点之间的帧——
+	// 重编码场景下切割精度与输出端 seek 一致，但每段不必再从文件头开始解码，
+	// 长文件多段切割提速非常明显（段越靠后收益越大）。
 	if j.Start != "" {
 		args = append(args, "-ss", j.Start)
 	}
+	args = append(args, "-i", j.Input)
+	args = append(args, j.PostInputArgs...)
+
+	// -to 保留在输出端：本 Job 切割时全程 -copyts 保留原始时间戳，
+	// 输出端 -to 直接对照原始 PTS 结束切割，行为与原输出端切割一致。
 	if j.End != "" {
 		args = append(args, "-to", j.End)
 	}
