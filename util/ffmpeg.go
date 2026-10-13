@@ -308,11 +308,12 @@ func inputHwaccelArgs(e Encoder) []string {
 	case EncoderNvidia:
 		return []string{"-hwaccel", "cuda"}
 	case EncoderIntel:
-		// 默认走软解、不追加 QSV 硬解参数。原因：-hwaccel qsv -hwaccel_output_format qsv
-		// 这条全硬链路在精确切割 / 多音轨 / filter_complex 等场景兼容性差，实测会在
-		// “QSV 编码本身可用”的机器上导致整条命令失败。软解 + h264_qsv 硬编已验证稳定，
-		// 也与 probeQsv 探测的配置保持一致。如需硬解可在 Job.PreInputArgs 手动追加。
-		return nil
+		// QSV 硬件解码：只加 -hwaccel qsv，不加 -hwaccel_output_format。
+		// 之前注释说的"全硬链路失败"是指 -hwaccel qsv -hwaccel_output_format qsv
+		// 这条帧全程留在 GPU 的链路在精确切割 / 多音轨 / filter_complex 场景会炸；
+		// 只加 -hwaccel qsv 不加 output_format 时，帧在 GPU 解码后自动下载回 CPU
+		// 内存（NV12），h264_qsv 编码器可直接接收，兼容性与软解+硬编一致。
+		return []string{"-hwaccel", "qsv"}
 	case EncoderQualcomm:
 		// Windows ARM64 高通平台：Media Foundation 硬件编码器必须吃 d3d11 显存帧。
 		// -hwaccel_output_format d3d11 让解码帧留在 GPU（NV12），编码端零拷贝；
@@ -321,13 +322,17 @@ func inputHwaccelArgs(e Encoder) []string {
 		// 硬编码器拒收并报 “Error reinitializing filters”。
 		return []string{"-hwaccel", "d3d11va", "-hwaccel_output_format", "d3d11"}
 	case EncoderApple:
-		// VideoToolbox 编码器本身不通过 -hwaccel 暴露硬解接口，ffmpeg 会在需要时自动使用 VT 解码，
-		// 故此处不追加 -hwaccel 参数。
-		return nil
+		// VideoToolbox 硬件解码：显式指定 -hwaccel videotoolbox 让 ffmpeg 调用 VT 解码器，
+		// H.264/HEVC 等常见编码可从 CPU 软解（单线程瓶颈）切换到硬件解码（专用媒体引擎），
+		// 长视频切割提速非常明显。
+		// 不加 -hwaccel_output_format：让解码帧自动下载回 CPU 内存（NV12/yuv420p），
+		// h264_videotoolbox 编码器能直接接收，兼容性最稳。
+		return []string{"-hwaccel", "videotoolbox"}
 	case EncoderAMD:
-		// AMF 编码器无配套的 -hwaccel 解码路径，硬解需走 D3D11VA/VAAPI 但跨平台兼容性差，
-		// 故默认走软解以保证稳定性；如需硬解可在 Job.PreInputArgs 手动追加。
-		return nil
+		// D3D11VA 硬件解码：AMD GPU 在 Windows 上通过 D3D11VA 硬解 H.264/HEVC。
+		// 只加 -hwaccel d3d11va 不加 output_format，帧解码后下载回 CPU 内存，
+		// h264_amf 编码器可直接接收，避免全硬链路兼容性问题。
+		return []string{"-hwaccel", "d3d11va"}
 	default:
 		return nil
 	}
