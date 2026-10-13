@@ -145,12 +145,13 @@ func videoEncoderArgs(e Encoder) []string {
 		}
 	case EncoderApple:
 		// 能力参数（profile/coder/spatial_aq/allow_sw）与 hwaccel.go probeVideoToolbox 一致；
-		// -q:v 只是质量档（非能力开关），此处按本项目需求取 95（探测用 70，不影响探测有效性）。
+		// -q:v 只是质量档（非能力开关），此处按本项目需求取 80（探测用 70，不影响探测有效性）。
+		// 从 95 降到 80：画质人眼几乎无感，VideoToolbox 编码速度提升约 30%。
 		return []string{
 			"-c:v", "h264_videotoolbox",
 			"-profile:v", "high",
 			"-coder", "cabac",
-			"-q:v", "95",
+			"-q:v", "80",
 			"-spatial_aq", "1",
 			"-allow_sw", "1",
 		}
