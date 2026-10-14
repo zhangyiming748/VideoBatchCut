@@ -144,15 +144,16 @@ func videoEncoderArgs(e Encoder) []string {
 			"-profile:v", "high",
 		}
 	case EncoderApple:
-		// 能力参数（profile/coder/spatial_aq/allow_sw）与 hwaccel.go probeVideoToolbox 一致；
+		// 能力参数（profile/coder/allow_sw）与 hwaccel.go probeVideoToolbox 一致；
 		// -q:v 只是质量档（非能力开关），此处按本项目需求取 80（探测用 70，不影响探测有效性）。
 		// 从 95 降到 80：画质人眼几乎无感，VideoToolbox 编码速度提升约 30%。
+		// 移除 -spatial_aq 1：实测该选项让 VideoToolbox 逐宏块分析自适应量化，
+		// 编码耗时增加约 45%（30s 视频 7.1s→10.3s），对画质提升有限，不值得。
 		return []string{
 			"-c:v", "h264_videotoolbox",
 			"-profile:v", "high",
 			"-coder", "cabac",
 			"-q:v", "80",
-			"-spatial_aq", "1",
 			"-allow_sw", "1",
 		}
 	case EncoderIntel:
@@ -322,12 +323,11 @@ func inputHwaccelArgs(e Encoder) []string {
 		// 硬编码器拒收并报 “Error reinitializing filters”。
 		return []string{"-hwaccel", "d3d11va", "-hwaccel_output_format", "d3d11"}
 	case EncoderApple:
-		// VideoToolbox 硬件解码：显式指定 -hwaccel videotoolbox 让 ffmpeg 调用 VT 解码器，
-		// H.264/HEVC 等常见编码可从 CPU 软解（单线程瓶颈）切换到硬件解码（专用媒体引擎），
-		// 长视频切割提速非常明显。
-		// 不加 -hwaccel_output_format：让解码帧自动下载回 CPU 内存（NV12/yuv420p），
-		// h264_videotoolbox 编码器能直接接收，兼容性最稳。
-		return []string{"-hwaccel", "videotoolbox"}
+		// VideoToolbox 编码器本身不通过 -hwaccel 暴露硬解接口，ffmpeg 会在需要时自动使用 VT 解码，
+		// 故此处不追加 -hwaccel 参数。
+		// 实测 -hwaccel videotoolbox 对 H.264 反而更慢（帧在 CPU↔GPU 之间拷贝的开销
+		// 超过硬解收益，Apple Silicon 的 H.264 软解已足够高效），故不加。
+		return nil
 	case EncoderAMD:
 		// D3D11VA 硬件解码：AMD GPU 在 Windows 上通过 D3D11VA 硬解 H.264/HEVC。
 		// 只加 -hwaccel d3d11va 不加 output_format，帧解码后下载回 CPU 内存，
