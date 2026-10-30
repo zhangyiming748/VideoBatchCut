@@ -1,6 +1,8 @@
 github.com/cpuguy83/go-md2man/v2 v2.0.6/go.mod h1:oOW0eioCTA6cOiMLiUPZOpcVxMig6NIQQ7OS05n1F4g=
 github.com/dustin/go-humanize v1.0.1 h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkpeCY=
 github.com/dustin/go-humanize v1.0.1/go.mod h1:Mu1zIs6XwVuF/gI1OepvI0qD18qycQx+mFykh5fBlto=
+github.com/gabriel-vasile/mimetype v1.4.16 h1:5izNFuvA37st1dDRAcA7TtmngBmRgiIPDmTtiEvjx1E=
+github.com/gabriel-vasile/mimetype v1.4.16/go.mod h1:3oFFwxX8kTklZwzIl2aQEDZT0lKY8xH92ST88bAwba4=
 github.com/glebarez/go-sqlite v1.22.0 h1:uAcMJhaA6r3LHMTFgP0SifzgXg46yJkgxqyuyec+ruQ=
 github.com/glebarez/go-sqlite v1.22.0/go.mod h1:PlBIdHe0+aUEFn+r2/uthrWq4FxbzugL0L8Li6yQJbc=
 github.com/glebarez/sqlite v1.11.0 h1:wSG0irqzP6VurnMEpFGer5Li19RpIRi2qvQz++w0GMw=
@@ -43,6 +45,8 @@ github.com/zhangyiming748/finder v0.0.14 h1:FsN88wtboxTqzQqKu4HK69Rh1Fq1vcFi5UkT
 github.com/zhangyiming748/finder v0.0.14/go.mod h1:92Nl48xt4VYxeyQIlYuxvhX+sCVba9SlKEWKMHzzDdA=
 github.com/zhangyiming748/finder v0.0.15 h1:fVfNRWInRP7Ha1ZDlVEbw7c5l9ttsJwlNSF6/uP1/0w=
 github.com/zhangyiming748/finder v0.0.15/go.mod h1:92Nl48xt4VYxeyQIlYuxvhX+sCVba9SlKEWKMHzzDdA=
+github.com/zhangyiming748/finder v0.0.16 h1:Ie8HfjXdXKBIo9MsP7vukLY3UQv6kFv2kHHz+/5zbCk=
+github.com/zhangyiming748/finder v0.0.16/go.mod h1:JR9tzFzcJxNMRTNvV8Y9kV5fBSFu/CpqMRTCrEYXRGU=
 github.com/zhangyiming748/lumberjack v0.0.1 h1:/r1XMBfGVZ/ZrRU56vl0aKeVddidi3388ETLLCWxoW4=
 github.com/zhangyiming748/lumberjack v0.0.1/go.mod h1:11eemyl+ecJVHsV0uA62hHy+geuwthU0Y2owuM9TXdI=
 go.yaml.in/yaml/v3 v3.0.4/go.mod h1:DhzuOOF2ATzADvBadXxruRBLzYTpT36CKvDb3+aBEFg=
